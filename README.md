@@ -1,75 +1,144 @@
 # SkyVortex — 飞行员立体天气云图引擎
 
-> 基于 Cesium + 体积云的航空雷雨三维可视化引擎，用于飞行员雷雨绕飞决策。
+基于 Cesium 体积云渲染的航空雷雨三维可视化引擎。将多高度雷达 CAPPI + 卫星云顶数据合成为三维体积云，叠加在数字地球上，供飞行员雷雨绕飞决策。
+
+![Cesium](https://img.shields.io/badge/Cesium-1.132-blue) ![License](https://img.shields.io/badge/license-MIT-green)
+
+## 效果
+
+- ☁️ 体积云 raymarch（多层云、形状/细节 3D 纹理、weather 图驱动）
+- 🌅 Bruneton 预计算大气散射 + 空中透视
+- 🌑 Beer Shadow Map 云影 + 丁达尔光束
+- ✨ 镜头光晕泛光
+- 📐 三层云高度映射：1km 低层 / 3.5km 对流核心 / 8km 卷云砧
 
 ## 架构
 
+6 个深度模块，4 条接缝（详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）：
+
+```
+UI Layer (TimelineController / StormPanel)
+    │ 接缝 3: frame index / user intent
+SkyVortexEngine (Cesium + 体积云 PostProcess)
+    │ 接缝 2: CloudTexture { rgba, layerConfig }
+CloudTextureSynthesizer (dBZ → RGBA 合成)
+    │ 接缝 1: WeatherFrame { layers, bounds }
+WeatherDataProvider ← MockProvider / CMAProvider / CommercialProvider
+
+独立分析：StormTracker (单体识别+追踪) / FlightPathProfiler (航线剖面)
+```
+
+## 项目结构
+
 ```
 skyvortex/
-├─ engine-base/             # 复刻自 cesium-clouds-atmosphere（MIT）
-│  └─ 体积云 + Bruneton 大气 + 空中透视 + 镜头光晕渲染管线
-├─ data/                    # P0 数据接入层（CAPPI 雷达 + 风云卫星 IR）
-│  ├─ sources/              # 数据源适配器
-│  ├─ pipeline/             # 处理管线：CAPPI → local_weather.png 4通道纹理
-│  └─ cache/                # 缓存层
-├─ public/
-│  └─ weather/              # 生成的天气纹理（4 通道 PNG）
-├─ demo/                    # 飞行员视角 Demo
-│  └─ main.js
-├─ tools/
-│  └─ fetch_cappi.py        # CAPPI 雷达数据抓取与合成
-└─ package.json
+├─ src/                              # 核心模块
+│  ├─ index.js                       # 统一出口
+│  ├─ data/
+│  │  ├─ types.js                    # JSDoc 类型契约
+│  │  ├─ WeatherDataProvider.js      # 数据层（接缝 1）
+│  │  └─ MockProvider.js             # mock 适配器
+│  ├─ synthesis/
+│  │  └─ CloudTextureSynthesizer.js  # 合成层（接缝 2）
+│  ├─ analysis/
+│  │  ├─ StormTracker.js             # 连通域识别 + 跨帧追踪 + 30min 外推
+│  │  └─ FlightPathProfiler.js       # 航线垂直剖面
+│  └─ ui/
+│     └─ TimelineController.js       # 时间轴播放状态机
+├─ skyvortex-engine.js               # 渲染层（接缝 3，依赖 Cesium）
+├─ engine-base/                      # 体积云引擎（MIT，改编自 three-geospatial）
+├─ data/pipeline/
+│  └─ cappi_to_weather.py            # Python 离线数据管线
+├─ demo/
+│  ├─ pilot-app.html                 # 飞行员 Demo 页面
+│  └─ main.js                        # Demo 逻辑
+├─ public/weather/                   # 生成的天气纹理（4 通道 PNG）
+├─ docs/
+│  ├─ SPEC.md                        # MVP 产品规格
+│  └─ ARCHITECTURE.md                # 模块架构图
+└─ MAP.md                            # 开发路线图（wayfinder）
 ```
 
-## 数据流
-
-```
-┌────────────────────────────────┐
-│ 外部数据源                       │
-│  ① CMA 雷达 CAPPI 拼图（公开）   │
-│  ② 风云四号 IR 云顶温度          │
-│  ③ 探空/模式（垂直订正）         │
-└────────────────┬───────────────┘
-                 ↓
-┌────────────────────────────────┐
-│ data/pipeline/cappi_to_weather.py│
-│  · 下载/解码 CAPPI               │
-│  · 按高度分 3 层 → R/G/B        │
-│  · 风云 IR 标定云顶 → A         │
-│  · 输出 4 通道 PNG                │
-└────────────────┬───────────────┘
-                 ↓
-┌────────────────────────────────┐
-│ engine-base 渲染管线             │
-│  · local_weather.png 喂入        │
-│  · 每层云高度/厚度映射            │
-│  · Cesium 球体上呈现三维云体      │
-└────────────────────────────────┘
-```
-
-## P0 目标（MVP）
-
-- [x] 跑通 cesium-clouds-atmosphere demo
-- [x] 接入中国气象局 CAPPI 雷达拼图（1km/3km/6km 高度）
-- [x] CAPPI → 4 通道 local_weather.png 转换
-- [x] Demo：飞行员视角，北京区域，雷雨云体实时刷新
-- [ ] 多时刻时间轴（后续迭代）
-
-## 运行
+## 快速开始
 
 ```bash
-# 1. 启动引擎 dev server（含 Demo）
-cd engine-base && npm install && npm run demo
+# 安装依赖
+npm install
+cd engine-base && npm install && cd ..
 
-# 2. 拉取并合成真实雷达数据（需联网）
-cd ../tools && python3 fetch_cappi.py --region beijing
+# 生成 mock 雷达数据（北京/上海/广州）
+python3 data/pipeline/cappi_to_weather.py --region beijing
+python3 data/pipeline/cappi_to_weather.py --region shanghai
+python3 data/pipeline/cappi_to_weather.py --region guangzhou
 
-# 3. 离线 Demo（无需联网，使用本地 mock 数据）
-cd engine-base && npm run demo -- --mock
+# 启动 dev server
+npm run dev
+# → http://localhost:5174/pilot-app.html
 ```
 
-## 数据源参考
+> ⚠️ 体积云 raymarching 需要真实 GPU，headless 浏览器 / 虚拟机中可能渲染为黑屏。请在 Chrome / Safari 中打开。
 
-- CMA 雷达拼图：`http://www.nmc.cn/publish/radar/chinaall.html`
-- CMA 探空：每日 02/14 UTC 两次
-- 风云四号 IR：1km 分辨率，5min 更新（CMA 部分开放）
+## 模块使用
+
+```js
+import {
+  WeatherDataProvider, MockProvider,
+  CloudTextureSynthesizer,
+  StormTracker, FlightPathProfiler,
+  TimelineController,
+} from "./src/index.js";
+
+// 数据
+const provider = new WeatherDataProvider();
+provider.setAdapter(new MockProvider());
+const frames = await provider.getTimeSeries("beijing", "2026-07-28T12:00:00Z", 12);
+
+// 合成
+const synth = new CloudTextureSynthesizer();
+const texture = synth.synthesize(frames[0]);
+
+// 分析
+const tracker = new StormTracker();
+const storms = tracker.detect(frames[6]);     // → [{id, lon, lat, dbz, topHeight, level}]
+const tracks = tracker.track(frames);          // → [{storm, history, forecast}]
+
+// 航线剖面
+const profiler = new FlightPathProfiler();
+profiler.setPath([{lon: 115.5, lat: 39.5}, {lon: 117.2, lat: 40.3}]);
+const profile = profiler.getProfile(frames[6]); // → {distanceKm, dbz, heights}
+
+// 时间轴
+const tl = new TimelineController();
+tl.load(frames.map(f => ({timestamp: f.timestamp, data: f})));
+tl.onFrame((i, frame) => engine.setFrame(frame));
+tl.play();
+```
+
+## 数据源
+
+| 阶段 | 数据源 | 状态 |
+|------|--------|------|
+| P0 | Mock 生成器（离线） | ✅ 已完成 |
+| P1 | CMA 雷达拼图（nmc.cn，公开） | 🔜 待接入 |
+| P2 | 商业 API（和风 / 象辑） | 📋 规划中 |
+| P3 | 风云四号 IR 云顶反演 | 📋 规划中 |
+
+## 路线图
+
+- [x] P0：引擎集成 + mock 数据管线 + 飞行员 Demo
+- [x] 架构脚手架：6 模块 + 4 接缝 + 端到端测试
+- [ ] T1：时间轴动画（多帧播放 / 暂停 / 拖拽）
+- [ ] T2：真实 CAPPI 数据接入
+- [ ] T3：雷暴单体识别（连通域 + 质心 + 移速）
+- [ ] T4：飞行路径垂直剖面
+- [ ] T5：风云四号 IR 云顶反演
+- [ ] Capacitor 移动端打包
+
+## 致谢
+
+- [cesium-clouds-atmosphere](https://github.com/yuwoniu03/cesium-clouds-atmosphere)（MIT）— 体积云 + Bruneton 大气渲染
+- [three-geospatial](https://github.com/takram-design-engineering/three-geospatial)（MIT）— 原始渲染实现
+
+## License
+
+MIT
