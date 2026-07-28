@@ -1,4 +1,10 @@
 /**
+ * 移动端性能优化配置
+ */
+import { PERFORMANCE_PRESETS } from "./src/performance/PerformanceAdapter.js";
+export { detectDevicePerformance, getRecommendedPreset } from "./src/performance/PerformanceAdapter.js";
+
+/**
  * SkyVortex Engine
  *
  * 面向飞行员的 3D 立体天气云图引擎。
@@ -78,6 +84,9 @@ export class SkyVortexEngine {
 
     // 应用 SkyVortex 默认云层高度
     this.applyLayers(this.opts.layers || DEFAULT_LAYERS);
+
+    // 自动检测并应用性能配置
+    this._applyPerformancePreset(this.opts.performance);
 
     // 应用自定义 weather 纹理（如果提供）
     if (this.opts.weatherTextureUrl) {
@@ -195,6 +204,63 @@ export class SkyVortexEngine {
     f.add(this.pipeline.params.layers[2], "height", 100, 5000, 50).name("高层云厚度");
     f.add(this.pipeline.params.layers[2], "coverage", 0, 1, 0.01).name("高层覆盖度");
     f.open();
+  }
+
+  /**
+   * 设置性能配置档位
+   * @param {string|object} preset - 档位名 (high/medium/low/ultra) 或配置对象
+   */
+  setPerformancePreset(preset) {
+    if (!this.pipeline) return;
+    const p = this.pipeline.params;
+
+    if (typeof preset === "string") {
+      preset = PERFORMANCE_PRESETS[preset] || PERFORMANCE_PRESETS.medium;
+    }
+
+    // 应用到 shader uniforms
+    p.maxSteps = preset.maxSteps;
+    p.maxStepsToSun = preset.maxStepsToSun;
+    p.minStepSize = preset.minStepSize;
+    p.maxStepSize = preset.maxStepSize;
+    p.minSecondaryStepSize = preset.minSecondaryStepSize;
+    p.secondaryStepScale = preset.secondaryStepScale;
+    p.multiScatteringOctaves = preset.multiScatteringOctaves;
+
+    // 调整渲染分辨率（通过 Cesium scene）
+    if (preset.resolutionScale !== undefined && this.viewer.scene) {
+      // Cesium 1.132+ 支持 postProcessStages 分辨率缩放
+      const stages = this.viewer.scene.postProcessStages;
+      for (let i = 0; i < stages.length; i++) {
+        const stage = stages.get(i);
+        if (stage && stage.uniformState) {
+          // 不直接设置分辨率，而是通过调整相机视口来间接控制
+          // 具体实现取决于 Cesium 版本
+        }
+      }
+    }
+
+    console.log(`[SkyVortex] performance preset applied:`, preset.label || preset);
+    return this;
+  }
+
+  /**
+   * 自动检测设备性能并应用推荐配置
+   * @param {string|object} [userPreset] - 用户指定的配置
+   */
+  async _applyPerformancePreset(userPreset) {
+    if (userPreset) {
+      this.setPerformancePreset(userPreset);
+      return;
+    }
+    // 自动检测
+    try {
+      const { getRecommendedPreset } = await import("./src/performance/PerformanceAdapter.js");
+      const preset = getRecommendedPreset();
+      this.setPerformancePreset(preset);
+    } catch (e) {
+      console.warn("[SkyVortex] performance detection failed:", e);
+    }
   }
 }
 

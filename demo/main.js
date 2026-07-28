@@ -107,6 +107,7 @@ const provider = new WeatherDataProvider();
 provider.setAdapter(new MockProvider(42));
 const synth = new CloudTextureSynthesizer();
 const stormTracker = new StormTracker();
+let currentPerformance = "high"; // 默认高性能
 
 // ── SIGMET 航空警告（NOAA 免费数据） ──────────────────────────────────
 
@@ -328,8 +329,21 @@ document.getElementById("sv-toggle-clouds").addEventListener("click", () => {
   toast(cloudsVisible ? "云体显示" : "云体隐藏");
 });
 
+// ── 性能模式切换 ────────────────────────────────────────────────────────
+
+document.querySelectorAll("#sv-perf .sv-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#sv-perf .sv-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentPerformance = btn.dataset.perf;
+    engine.setPerformancePreset(currentPerformance);
+    toast(`性能模式：${btn.textContent}`);
+  });
+});
+
 // ── 启动 ─────────────────────────────────────────────────────────────────
 
+window.__main_loaded = true;
 loadRegion("beijing");
 
 console.log("%c SkyVortex ready ", "background:#56a8f0;color:#000;padding:4px 8px;border-radius:4px;font-weight:600");
