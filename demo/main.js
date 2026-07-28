@@ -118,12 +118,9 @@ async function loadRegion(region) {
   try {
     // 1. 数据层：生成 12 帧时序
     const frames = await provider.getTimeSeries(region, "2026-07-28T12:00:00Z", 12, 5);
-    window.__step = '1-ok frames=' + frames.length;
 
-    // 2. 合成层：第一帧 → RGBA 纹理
+    // 2. 合成层：第一帧 → RGBA → PNG blob
     const tex = synth.synthesize(frames[0]);
-    window.__step = '2-ok tex=' + tex.width;
-    // RGBA raw → PNG blob（OffscreenCanvas 编码）
     const canvas = new OffscreenCanvas(tex.width, tex.height);
     const ctx = canvas.getContext("2d");
     const imgData = ctx.createImageData(tex.width, tex.height);
@@ -133,35 +130,26 @@ async function loadRegion(region) {
     const url = URL.createObjectURL(pngBlob);
 
     // 3. 渲染层：替换天气纹理
-    window.__step = '3-swap';
     await engine.swapWeatherTexture(url);
-    window.__step = '3-ok';
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 
     // 4. 时间轴：加载帧
-    window.__step = '4-timeline';
     timeline = new TimelineController();
     timeline.load(frames.map((f, i) => ({ timestamp: f.timestamp, data: f })));
     const slider = document.getElementById("sv-timeline");
     slider.max = timeline.count - 1;
     slider.value = 0;
     updateTimeDisplay();
-    window.__step = '4-ok count=' + timeline.count;
 
     // 5. 分析层：识别单体
-    window.__step = '5-tracker';
     renderStormsFromTracker(frames[Math.floor(frames.length / 2)]);
-    window.__step = '5-ok';
 
     // 6. 视角
     engine.setPilotView(r.center[0], r.center[1], r.alt);
 
     document.getElementById("sv-status").textContent = "● 实时";
-    window.__step = 'done';
     toast(`切换至 ${r.name}`);
   } catch (err) {
-    window.__step = 'ERR at ' + (window.__step || '?');
-    window.__load_error = "type=" + typeof err + " msg=" + JSON.stringify(err) + " stack=" + (err?.stack || 'no-stack');
     console.error("loadRegion failed:", err);
     toast(`加载失败（${region}）`);
     document.getElementById("sv-status").textContent = "● 错误";

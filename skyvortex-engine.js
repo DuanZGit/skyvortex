@@ -105,19 +105,15 @@ export class SkyVortexEngine {
    */
   async swapWeatherTexture(url) {
     if (!this.pipeline) throw new Error("Engine not initialized");
-    window.__swap_step = 'fetch';
     const resp = await fetch(url);
-    window.__swap_step = 'blob';
     const blob = await resp.blob();
     const img = new Image();
     const blobUrl = URL.createObjectURL(blob);
-    window.__swap_step = 'img-load';
     await new Promise((resolve, reject) => {
-      img.onload = () => { window.__swap_step = 'img-ok size=' + blob.size; resolve(); };
-      img.onerror = (e) => { window.__swap_step = 'img-err type=' + e.type + ' src=' + blobUrl.slice(0,40); reject(new Error("weather texture load failed")); };
-      img.src = blobUrl;
+      img.onload = resolve;
+      img.onerror = () => reject(new Error("weather texture load failed"));
     });
-    window.__swap_step = 'tex-create';
+    img.src = blobUrl;
 
     const ctx = this.viewer.scene.context;
     const newTex = new Cesium.Texture({
@@ -128,7 +124,6 @@ export class SkyVortexEngine {
         wrapS: Cesium.TextureWrap.REPEAT, wrapT: Cesium.TextureWrap.REPEAT,
       }),
     });
-    window.__swap_step = 'tex-ok';
 
     const old = this.pipeline.textures.weather;
     this.pipeline.textures.weather = newTex;
