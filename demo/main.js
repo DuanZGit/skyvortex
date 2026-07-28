@@ -133,6 +133,28 @@ async function loadSigmets() {
   }
 }
 
+// ── Open-Meteo 云量预报 ───────────────────────────────────────────────
+
+async function loadForecast() {
+  const el = document.getElementById("sv-forecast");
+  try {
+    const summary = await provider.getFlightWeatherSummary(currentRegion, 3);
+    el.innerHTML = summary.map(d => `
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <span>${d.date.slice(5)}</span>
+        <span style="color:${d.riskLevel==='warn'?'var(--sv-warn)':'var(--sv-safe)'}">
+          ${d.maxCloud.toFixed(0)}% 云
+        </span>
+        <span>${d.maxPrecip.toFixed(1)}mm</span>
+        <span>${d.avgWind.toFixed(0)}m/s</span>
+      </div>
+    `).join("");
+  } catch (err) {
+    console.error("Forecast load failed:", err);
+    el.innerHTML = `<div style="font-size:11px;color:#f44336;">预报加载失败：${err.message}</div>`;
+  }
+}
+
 // ── 加载区域时序数据 ────────────────────────────────────────────────────
 
 async function loadRegion(region) {
@@ -171,6 +193,9 @@ async function loadRegion(region) {
 
     // 6. 航空警告（NOAA SIGMET）
     loadSigmets();
+
+    // 6.5 云量预报（Open-Meteo）
+    loadForecast();
 
     // 7. 视角
     engine.setPilotView(r.center[0], r.center[1], r.alt);

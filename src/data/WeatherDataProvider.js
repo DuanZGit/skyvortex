@@ -143,4 +143,41 @@ export class WeatherDataProvider {
     }
     return allHits;
   }
+
+  // ── Open-Meteo 数值预报（接缝 6：全球云量/降水/风）────────────────
+
+  /** @type {OpenMeteoProvider | null} */
+  #openMeteo = null;
+
+  /**
+   * 获取 Open-Meteo 云量预报（低/中/高云分层）
+   * @param {string} region
+   * @param {number} [days=3]
+   * @returns {Promise<{lat,lon,layers:Array}>}
+   */
+  async getCloudForecast(region, days = 3) {
+    if (!this.#openMeteo) {
+      const { OpenMeteoProvider } = await import("./OpenMeteoProvider.js");
+      this.#openMeteo = new OpenMeteoProvider();
+    }
+    const bounds = this.#regions.get(region);
+    if (!bounds) throw new Error(`Unknown region: ${region}`);
+    return this.#openMeteo.fetchForecast(bounds.center[1], bounds.center[0], days);
+  }
+
+  /**
+   * 获取航线天气摘要（用于飞行计划）
+   * @param {string} region
+   * @param {number} [days=3]
+   * @returns {Promise<Array<{date,maxCloud,maxPrecip,avgWind,riskLevel}>>}
+   */
+  async getFlightWeatherSummary(region, days = 3) {
+    if (!this.#openMeteo) {
+      const { OpenMeteoProvider } = await import("./OpenMeteoProvider.js");
+      this.#openMeteo = new OpenMeteoProvider();
+    }
+    const bounds = this.#regions.get(region);
+    if (!bounds) throw new Error(`Unknown region: ${region}`);
+    return this.#openMeteo.getDailySummary(bounds.center[1], bounds.center[0], days);
+  }
 }

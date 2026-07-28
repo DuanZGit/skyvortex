@@ -14,6 +14,7 @@
 export { WeatherDataProvider } from "./data/WeatherDataProvider.js";
 export { MockProvider } from "./data/MockProvider.js";
 export { NoaaProvider } from "./data/NoaaProvider.js";
+export { OpenMeteoProvider } from "./data/OpenMeteoProvider.js";
 
 // ── 合成层 ──
 export { CloudTextureSynthesizer, DEFAULT_LAYERS } from "./synthesis/CloudTextureSynthesizer.js";
