@@ -161,8 +161,14 @@
       <button class="sv-fpv-btn" id="sv-toggle-clouds"><span class="icon">☁️</span>云体显隐</button>
     </div>
 
-    <!-- 底部图例 -->
-    <div id="sv-footer" class="sv-hud">
+    <!-- 底部：时间轴 + 图例 -->
+    <div id="sv-footer" class="sv-hud" style="display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button id="sv-play" class="sv-btn" style="flex:0 0 60px;">▶</button>
+        <input id="sv-timeline" type="range" min="0" max="11" value="0" step="1"
+               style="flex:1;accent-color:var(--sv-accent);" />
+        <span id="sv-time" style="font-family:'SF Mono',monospace;font-size:12px;min-width:90px;text-align:right;">--:--</span>
+      </div>
       <div class="sv-legend">
         <div class="item"><div class="dot" style="background:#66bb6a"></div>安全 &lt;30 dBZ</div>
         <div class="item"><div class="dot" style="background:#ff7043"></div>注意 30-45 dBZ</div>

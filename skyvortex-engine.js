@@ -105,25 +105,45 @@ export class SkyVortexEngine {
    */
   async swapWeatherTexture(url) {
     if (!this.pipeline) throw new Error("Engine not initialized");
-    const newTex = await this.pipeline._load2DTexture(url);
-    if (!newTex) throw new Error(`Failed to load weather texture: ${url}`);
+    window.__swap_step = 'fetch';
+    const resp = await fetch(url);
+    window.__swap_step = 'blob';
+    const blob = await resp.blob();
+    const img = new Image();
+    const blobUrl = URL.createObjectURL(blob);
+    window.__swap_step = 'img-load';
+    await new Promise((resolve, reject) => {
+      img.onload = () => { window.__swap_step = 'img-ok size=' + blob.size; resolve(); };
+      img.onerror = (e) => { window.__swap_step = 'img-err type=' + e.type + ' src=' + blobUrl.slice(0,40); reject(new Error("weather texture load failed")); };
+      img.src = blobUrl;
+    });
+    window.__swap_step = 'tex-create';
+
+    const ctx = this.viewer.scene.context;
+    const newTex = new Cesium.Texture({
+      context: ctx, source: img,
+      sampler: new Cesium.Sampler({
+        minificationFilter: Cesium.TextureMinificationFilter.LINEAR,
+        magnificationFilter: Cesium.TextureMagnificationFilter.LINEAR,
+        wrapS: Cesium.TextureWrap.REPEAT, wrapT: Cesium.TextureWrap.REPEAT,
+      }),
+    });
+    window.__swap_step = 'tex-ok';
 
     const old = this.pipeline.textures.weather;
     this.pipeline.textures.weather = newTex;
-
-    // 同步到 shader uniform（_renderTexture 重设）
     if (this.pipeline._renderState) {
       this.pipeline._renderState.weather = newTex;
     }
-    // 同时同步 BSM pass（如果存在）
     if (this.pipeline.shadowPass?.params) {
-      // BSM 内部缓存 weather 纹理引用，需重新解析
       this.pipeline.shadowPass.params.weatherTexture = newTex;
     }
 
     if (old && old.destroy) {
       try { old.destroy(); } catch (e) { /* ignore */ }
     }
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    window.__swap_step = 'done';
     console.log(`[SkyVortex] weather texture swapped → ${url}`);
   }
 
