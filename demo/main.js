@@ -22,6 +22,18 @@ const REGIONS = {
 let currentRegion = "beijing";
 let timeline = null;
 
+// ── 状态管理 ────────────────────────────────────────────────────────────
+
+function setStatus(text, type = "ok") {
+  const el = document.getElementById("sv-status");
+  const dot = document.getElementById("sv-status-dot");
+  if (!el) return;
+  el.textContent = text;
+  if (dot) {
+    dot.classList.toggle("error", type === "error");
+  }
+}
+
 // ── 工具函数 ────────────────────────────────────────────────────────────
 
 let toastTimer = null;
@@ -105,11 +117,12 @@ try {
   await engine.init();
   window.__init_error = null;
   document.getElementById("loading").classList.add("hidden");
+  setStatus("实时");
   toast("SkyVortex 就绪");
 } catch (err) {
   window.__init_error = err.message + "\n" + err.stack;
   console.error("Engine init failed:", err);
-  document.getElementById("sv-status").textContent = "❌ 错误";
+  setStatus("错误", "error");
   document.getElementById("loading").innerHTML =
     `❌ 初始化失败：${err.message}<br><small style="opacity:.6">${err.stack?.split('\n')[0] || ''}</small>`;
   document.getElementById("loading").classList.remove("hidden");
@@ -177,9 +190,7 @@ async function loadForecast() {
 async function loadRegion(region) {
   currentRegion = region;
   const r = REGIONS[region];
-  const statusEl = document.getElementById("sv-status");
-  if (!statusEl) return;
-  statusEl.textContent = "● 加载中…";
+  setStatus("加载中…");
 
   try {
     // 1. 数据层：生成 12 帧时序
@@ -213,12 +224,12 @@ async function loadRegion(region) {
     // 7. 视角
     engine.setPilotView(r.center[0], r.center[1], r.alt);
 
-    if (statusEl) statusEl.textContent = "● 实时";
+    setStatus("实时");
     toast(`切换至 ${r.name}`);
   } catch (err) {
     console.error("loadRegion failed:", err);
     toast(`加载失败（${region}）`);
-    if (statusEl) statusEl.textContent = "● 错误";
+    setStatus("错误", "error");
   }
 }
 

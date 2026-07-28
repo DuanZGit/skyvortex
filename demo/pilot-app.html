@@ -1,171 +1,531 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SkyVortex · 飞行员立体天气云图</title>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/cesium@1.132.0/Build/Cesium/Widgets/widgets.css"
-    />
-    <script>
-      window.CESIUM_BASE_URL = "https://unpkg.com/cesium@1.132.0/Build/Cesium/";
-    </script>
-    <script src="https://unpkg.com/cesium@1.132.0/Build/Cesium/Cesium.js"></script>
-    <style>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>SkyVortex · 飞行员立体天气云图</title>
+
+  <!-- 字体：Geist + JetBrains Mono（数据用） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Cesium 1.132 -->
+  <link rel="stylesheet" href="https://unpkg.com/cesium@1.132.0/Build/Cesium/Widgets/widgets.css" />
+  <script>window.CESIUM_BASE_URL = "https://unpkg.com/cesium@1.132.0/Build/Cesium/";</script>
+  <script src="https://unpkg.com/cesium@1.132.0/Build/Cesium/Cesium.js"></script>
+
+  <style>
+    /* ═══════════════════════════════════════════
+       SkyVortex Pilot HUD — Taste-Skill Applied
+       设计方向：Dark Tech / 航空仪表板
+       配色：深空黑 + 航空蓝 + 警告橙
+       字体：Geist（UI）+ JetBrains Mono（数据）
+    ═══════════════════════════════════════════ */
+
+    :root {
+      /* 色彩系统 */
+      --sv-bg: rgba(8, 12, 18, 0.92);
+      --sv-bg-elevated: rgba(16, 22, 32, 0.95);
+      --sv-border: rgba(56, 189, 248, 0.2);
+      --sv-border-subtle: rgba(148, 163, 184, 0.1);
+      --sv-text: #f1f5f9;
+      --sv-text-muted: #94a3b8;
+      --sv-text-dim: #64748b;
+      --sv-accent: #38bdf8;        /* 航空蓝 */
+      --sv-accent-glow: rgba(56, 189, 248, 0.3);
+      --sv-safe: #22c55e;          /* 安全 */
+      --sv-warn: #f97316;          /* 注意 */
+      --sv-danger: #ef4444;        /* 危险 */
+      --sv-danger-glow: rgba(239, 68, 68, 0.4);
+
+      /* 间距系统 */
+      --sv-space-xs: 4px;
+      --sv-space-sm: 8px;
+      --sv-space-md: 12px;
+      --sv-space-lg: 16px;
+      --sv-space-xl: 24px;
+
+      /* 圆角 */
+      --sv-radius-sm: 6px;
+      --sv-radius-md: 10px;
+      --sv-radius-lg: 14px;
+
+      /* 字体 */
+      --sv-font-ui: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+      --sv-font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+
+      /* 安全区域 */
+      --sv-safe-top: env(safe-area-inset-top, 0px);
+      --sv-safe-bottom: env(safe-area-inset-bottom, 0px);
+      --sv-safe-left: env(safe-area-inset-left, 0px);
+      --sv-safe-right: env(safe-area-inset-right, 0px);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: var(--sv-font-ui);
+      background: #000;
+      color: var(--sv-text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ── 地球容器 ── */
+    #cesiumContainer {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+
+    /* ── 全局 HUD 层 ── */
+    .sv-hud {
+      position: fixed;
+      z-index: 10;
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      background: var(--sv-bg);
+      border: 1px solid var(--sv-border);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+
+    /* ── 顶部状态栏 ── */
+    #sv-header {
+      top: calc(var(--sv-safe-top) + var(--sv-space-sm));
+      left: var(--sv-space-sm);
+      right: var(--sv-space-sm);
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 var(--sv-space-md);
+      border-radius: var(--sv-radius-md);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .sv-brand {
+      display: flex;
+      align-items: center;
+      gap: var(--sv-space-sm);
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+
+    .sv-brand-icon {
+      width: 24px;
+      height: 24px;
+      background: linear-gradient(135deg, var(--sv-accent), #0ea5e9);
+      border-radius: var(--sv-radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      box-shadow: 0 0 12px var(--sv-accent-glow);
+    }
+
+    .sv-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--sv-safe);
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .sv-status-dot.error {
+      background: var(--sv-danger);
+      box-shadow: 0 0 8px var(--sv-danger-glow);
+      animation: none;
+    }
+
+    /* ── 左侧面板 ── */
+    #sv-panel {
+      top: calc(var(--sv-safe-top) + 60px);
+      left: var(--sv-space-sm);
+      width: 260px;
+      max-height: calc(100vh - var(--sv-safe-top) - var(--sv-safe-bottom) - 80px);
+      padding: var(--sv-space-md);
+      border-radius: var(--sv-radius-lg);
+      display: flex;
+      flex-direction: column;
+      gap: var(--sv-space-md);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    #sv-panel::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    #sv-panel::-webkit-scrollbar-thumb {
+      background: var(--sv-border);
+      border-radius: 3px;
+    }
+
+    .sv-section-title {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--sv-text-dim);
+      margin-bottom: var(--sv-space-sm);
+      padding-bottom: var(--sv-space-xs);
+      border-bottom: 1px solid var(--sv-border-subtle);
+    }
+
+    .sv-row {
+      display: flex;
+      gap: var(--sv-space-xs);
+      flex-wrap: wrap;
+    }
+
+    .sv-btn {
+      flex: 1;
+      min-width: 0;
+      padding: var(--sv-space-sm) var(--sv-space-md);
+      border: 1px solid var(--sv-border);
+      border-radius: var(--sv-radius-sm);
+      background: rgba(255,255,255,0.03);
+      color: var(--sv-text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      font-family: var(--sv-font-ui);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .sv-btn:active {
+      transform: scale(0.96);
+      background: rgba(255,255,255,0.08);
+    }
+
+    .sv-btn.active {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: var(--sv-accent);
+      color: var(--sv-accent);
+      box-shadow: 0 0 12px var(--sv-accent-glow), inset 0 1px 0 rgba(56, 189, 248, 0.2);
+    }
+
+    /* ── 单体列表 ── */
+    .sv-storm-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sv-space-xs);
+    }
+
+    .sv-storm {
+      padding: var(--sv-space-sm) var(--sv-space-md);
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--sv-border-subtle);
+      border-radius: var(--sv-radius-sm);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .sv-storm:active {
+      transform: scale(0.97);
+      background: rgba(255,255,255,0.05);
+    }
+
+    .sv-storm.safe { border-left: 2px solid var(--sv-safe); }
+    .sv-storm.warn { border-left: 2px solid var(--sv-warn); }
+    .sv-storm.danger { 
+      border-left: 2px solid var(--sv-danger);
+      background: rgba(239, 68, 68, 0.05);
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.1);
+    }
+
+    .sv-storm .id {
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--sv-font-mono);
+      letter-spacing: 0.02em;
+      margin-bottom: 2px;
+    }
+
+    .sv-storm .meta {
+      font-size: 10px;
+      color: var(--sv-text-dim);
+      font-family: var(--sv-font-mono);
+      letter-spacing: 0.01em;
+    }
+
+    /* ── 底部时间轴 ── */
+    #sv-footer {
+      bottom: calc(var(--sv-safe-bottom) + var(--sv-space-sm));
+      left: var(--sv-space-sm);
+      right: var(--sv-space-sm);
+      padding: var(--sv-space-md);
+      border-radius: var(--sv-radius-lg);
+      display: flex;
+      flex-direction: column;
+      gap: var(--sv-space-sm);
+    }
+
+    .sv-timeline-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sv-space-md);
+    }
+
+    #sv-play {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--sv-accent);
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--sv-accent);
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #sv-play:active {
+      transform: scale(0.92);
+      background: rgba(56, 189, 248, 0.2);
+    }
+
+    #sv-timeline {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255,255,255,0.08);
+      border-radius: 3px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    #sv-timeline::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--sv-accent);
+      box-shadow: 0 0 10px var(--sv-accent-glow);
+      cursor: pointer;
+      border: 2px solid rgba(255,255,255,0.2);
+    }
+
+    #sv-timeline::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--sv-accent);
+      box-shadow: 0 0 10px var(--sv-accent-glow);
+      cursor: pointer;
+      border: 2px solid rgba(255,255,255,0.2);
+    }
+
+    #sv-time {
+      font-family: var(--sv-font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--sv-accent);
+      min-width: 44px;
+      text-align: right;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── 图例 ── */
+    .sv-legend {
+      display: flex;
+      gap: var(--sv-space-md);
+      font-size: 10px;
+      color: var(--sv-text-dim);
+      flex-wrap: wrap;
+    }
+
+    .sv-legend .item {
+      display: flex;
+      align-items: center;
+      gap: var(--sv-space-xs);
+    }
+
+    .sv-legend .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── Toast ── */
+    #sv-toast {
+      position: fixed;
+      bottom: calc(var(--sv-safe-bottom) + 120px);
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      padding: var(--sv-space-sm) var(--sv-space-lg);
+      background: var(--sv-bg-elevated);
+      border: 1px solid var(--sv-border);
+      border-radius: var(--sv-radius-md);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--sv-text);
+      z-index: 100;
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+      white-space: nowrap;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    #sv-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── 加载状态 ── */
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(8, 12, 18, 0.9);
+      z-index: 50;
+      font-size: 14px;
+      color: var(--sv-text-muted);
+      font-family: var(--sv-font-ui);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    #loading.hidden {
+      display: none;
+    }
+
+    .sv-loading-spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--sv-border);
+      border-top-color: var(--sv-accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: var(--sv-space-md);
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── 移动端适配 ── */
+    @media (max-width: 768px) {
       :root {
-        --sv-bg: rgba(8, 16, 28, 0.85);
-        --sv-border: rgba(86, 158, 240, 0.4);
-        --sv-text: #d8e6f8;
-        --sv-accent: #56a8f0;
-        --sv-warn: #ff7043;
-        --sv-danger: #f44336;
-        --sv-safe: #66bb6a;
-      }
-      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: var(--sv-text); }
-      #cesiumContainer { width: 100%; height: 100%; }
-
-      /* 隐藏 Cesium 版权 */
-      .cesium-viewer-bottom, .cesium-widget-credits { display: none !important; }
-
-      /* 加载提示 */
-      #loading {
-        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-        background: #000; z-index: 100; transition: opacity 0.6s; font-size: 16px; letter-spacing: 2px;
-      }
-      #loading.hidden { opacity: 0; pointer-events: none; }
-
-      /* 顶部 HUD */
-      .sv-hud {
-        position: fixed; backdrop-filter: blur(8px);
-        background: var(--sv-bg); border: 1px solid var(--sv-border);
-        border-radius: 8px; padding: 12px 16px;
-      }
-      #sv-header {
-        top: 12px; left: 12px; right: 12px;
-        display: flex; justify-content: space-between; align-items: center;
-      }
-      #sv-header .title {
-        font-size: 16px; font-weight: 600; color: var(--sv-accent);
-        display: flex; align-items: center; gap: 8px;
-      }
-      #sv-header .title::before {
-        content: ""; display: inline-block; width: 10px; height: 10px;
-        background: var(--sv-accent); border-radius: 50%;
-        box-shadow: 0 0 12px var(--sv-accent);
-      }
-      #sv-header .status {
-        font-size: 12px; color: #8aa3c4;
-        font-family: "SF Mono", Consolas, monospace;
+        --sv-space-sm: 6px;
+        --sv-space-md: 10px;
+        --sv-space-lg: 14px;
       }
 
-      /* 左侧面板：区域 + 强度列表 */
       #sv-panel {
-        top: 70px; left: 12px; width: 260px;
-        max-height: calc(100vh - 90px); overflow-y: auto;
+        width: calc(100% - 24px);
+        max-height: 35vh;
+        top: calc(var(--sv-safe-top) + 56px);
       }
-      #sv-panel h3 {
-        margin: 0 0 8px; font-size: 12px; font-weight: 600;
-        color: var(--sv-accent); text-transform: uppercase; letter-spacing: 1px;
-      }
-      .sv-row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
-      .sv-btn {
-        flex: 1; padding: 6px 10px; font-size: 12px;
-        background: rgba(86, 168, 240, 0.1); color: var(--sv-text);
-        border: 1px solid var(--sv-border); border-radius: 4px;
-        cursor: pointer; transition: all 0.15s; min-width: 60px;
-      }
-      .sv-btn:hover { background: rgba(86, 168, 240, 0.25); }
-      .sv-btn.active { background: var(--sv-accent); color: #001428; font-weight: 600; }
 
-      .sv-storm-list { display: flex; flex-direction: column; gap: 6px; }
-      .sv-storm {
-        background: rgba(255, 255, 255, 0.04); border-left: 3px solid var(--sv-safe);
-        padding: 8px 10px; border-radius: 4px; font-size: 12px;
-        cursor: pointer; transition: all 0.15s;
+      .sv-storm .meta {
+        font-size: 9px;
       }
-      .sv-storm:hover { background: rgba(86, 168, 240, 0.12); }
-      .sv-storm.warn { border-left-color: var(--sv-warn); }
-      .sv-storm.danger { border-left-color: var(--sv-danger); }
-      .sv-storm .id { font-weight: 600; color: var(--sv-accent); font-family: "SF Mono", monospace; }
-      .sv-storm .meta { color: #8aa3c4; font-size: 11px; margin-top: 2px; }
 
-      /* 右侧面板：飞行视角 */
-      #sv-fpv {
-        top: 70px; right: 12px; width: 220px;
+      .sv-legend {
+        font-size: 9px;
+        gap: var(--sv-space-sm);
       }
-      #sv-fpv h3 { margin: 0 0 8px; font-size: 12px; color: var(--sv-accent); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-      .sv-fpv-btn {
-        display: block; width: 100%; padding: 8px 10px; margin-bottom: 6px;
-        background: rgba(86, 168, 240, 0.1); color: var(--sv-text);
-        border: 1px solid var(--sv-border); border-radius: 4px;
-        cursor: pointer; font-size: 12px; text-align: left; transition: all 0.15s;
-      }
-      .sv-fpv-btn:hover { background: rgba(86, 168, 240, 0.25); }
-      .sv-fpv-btn .icon { margin-right: 6px; }
+    }
 
-      /* 底部：图例 + 提示 */
-      #sv-footer {
-        bottom: 12px; left: 12px; right: 12px; text-align: center;
-        font-size: 11px; color: #6c87a8;
-        background: rgba(8, 16, 28, 0.7); padding: 6px 12px; border-radius: 4px;
+    @media (min-width: 769px) and (max-width: 1024px) {
+      #sv-panel {
+        width: 240px;
       }
-      .sv-legend { display: inline-flex; gap: 16px; align-items: center; }
-      .sv-legend .item { display: flex; align-items: center; gap: 4px; }
-      .sv-legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+    }
 
-      /* Toast 提示 */
-      #sv-toast {
-        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        background: rgba(0, 0, 0, 0.9); border: 1px solid var(--sv-accent);
-        color: var(--sv-text); padding: 12px 20px; border-radius: 6px;
-        font-size: 13px; z-index: 1000; opacity: 0; transition: opacity 0.3s;
-        pointer-events: none;
+    /* ── 减少动画偏好 ── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
       }
-      #sv-toast.show { opacity: 1; }
-    </style>
-  </head>
-  <body>
-    <div id="cesiumContainer"></div>
-    <div id="loading">SkyVortex · 初始化三维气象引擎…</div>
+    }
+  </style>
+</head>
+<body>
+  <!-- Cesium 地球 -->
+  <div id="cesiumContainer"></div>
 
-    <!-- 顶部 HUD -->
-    <div id="sv-header" class="sv-hud">
-      <div class="title">SkyVortex · 飞行员立体天气云图</div>
-      <div class="status" id="sv-status">就绪</div>
+  <!-- 顶部状态栏 -->
+  <div id="sv-header" class="sv-hud">
+    <div class="sv-brand">
+      <div class="sv-brand-icon">☁</div>
+      <span>SkyVortex</span>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="sv-status" style="font-size:11px;color:var(--sv-text-muted);">就绪</span>
+      <div class="sv-status-dot" id="sv-status-dot"></div>
+    </div>
+  </div>
 
-    <!-- 左侧：区域 + 雷雨列表 + SIGMET -->
-    <div id="sv-panel" class="sv-hud">
-      <h3>区域</h3>
+  <!-- 左侧面板 -->
+  <div id="sv-panel" class="sv-hud">
+    <!-- 区域 -->
+    <div>
+      <div class="sv-section-title">区域</div>
       <div class="sv-row" id="sv-regions">
         <button class="sv-btn active" data-region="beijing">北京</button>
         <button class="sv-btn" data-region="shanghai">上海</button>
         <button class="sv-btn" data-region="guangzhou">广州</button>
       </div>
-      <h3 style="margin-top:16px">检测到的雷暴单体</h3>
-      <div class="sv-storm-list" id="sv-storms">
-        <!-- 由 JS 填充 -->
-      </div>
-      <h3 style="margin-top:16px">⚠️ SIGMET 航空警告</h3>
-      <div class="sv-storm-list" id="sv-sigmets">
-        <div style="font-size:11px;color:#6c87a8;padding:4px;">加载中…</div>
-      </div>
-      <h3 style="margin-top:16px">🌤️ 云量预报 (Open-Meteo)</h3>
-      <div id="sv-forecast" style="font-size:11px;color:#6c87a8;padding:4px;">加载中…</div>
     </div>
 
-    <!-- 右侧：飞行视角 -->
-    <div id="sv-fpv" class="sv-hud">
-      <h3>飞行视角</h3>
-      <button class="sv-fpv-btn" data-fpv="pilot"><span class="icon">✈️</span>飞行员俯瞰 (10km)</button>
-      <button class="sv-fpv-btn" data-fpv="tower"><span class="icon">🗼</span>塔台视角 (1km)</button>
-      <button class="sv-fpv-btn" data-fpv="side"><span class="icon">↔️</span>侧面剖视</button>
-      <button class="sv-fpv-btn" data-fpv="top"><span class="icon">⬇️</span>正上方俯视</button>
-      <h3 style="margin-top:16px">操作</h3>
-      <button class="sv-fpv-btn" id="sv-refresh"><span class="icon">🔄</span>刷新雷达数据</button>
-      <button class="sv-fpv-btn" id="sv-toggle-clouds"><span class="icon">☁️</span>云体显隐</button>
-      <h3 style="margin-top:16px">性能模式</h3>
+    <!-- 雷暴单体 -->
+    <div>
+      <div class="sv-section-title">雷暴单体</div>
+      <div class="sv-storm-list" id="sv-storms">
+        <div style="font-size:11px;color:var(--sv-text-dim);padding:4px;">加载中…</div>
+      </div>
+    </div>
+
+    <!-- SIGMET -->
+    <div>
+      <div class="sv-section-title">航空警告 SIGMET</div>
+      <div class="sv-storm-list" id="sv-sigmets">
+        <div style="font-size:11px;color:var(--sv-text-dim);padding:4px;">加载中…</div>
+      </div>
+    </div>
+
+    <!-- 预报 -->
+    <div>
+      <div class="sv-section-title">云量预报</div>
+      <div id="sv-forecast" style="font-size:11px;color:var(--sv-text-dim);padding:4px;">加载中…</div>
+    </div>
+
+    <!-- 性能模式 -->
+    <div>
+      <div class="sv-section-title">性能模式</div>
       <div class="sv-row" id="sv-perf">
         <button class="sv-btn active" data-perf="high">高</button>
         <button class="sv-btn" data-perf="medium">中</button>
@@ -173,25 +533,33 @@
         <button class="sv-btn" data-perf="ultra">极低</button>
       </div>
     </div>
+  </div>
 
-    <!-- 底部：时间轴 + 图例 -->
-    <div id="sv-footer" class="sv-hud" style="display:flex;flex-direction:column;gap:8px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button id="sv-play" class="sv-btn" style="flex:0 0 60px;">▶</button>
-        <input id="sv-timeline" type="range" min="0" max="11" value="0" step="1"
-               style="flex:1;accent-color:var(--sv-accent);" />
-        <span id="sv-time" style="font-family:'SF Mono',monospace;font-size:12px;min-width:90px;text-align:right;">--:--</span>
-      </div>
-      <div class="sv-legend">
-        <div class="item"><div class="dot" style="background:#66bb6a"></div>安全 &lt;30 dBZ</div>
-        <div class="item"><div class="dot" style="background:#ff7043"></div>注意 30-45 dBZ</div>
-        <div class="item"><div class="dot" style="background:#f44336"></div>危险 &gt;45 dBZ</div>
-        <div class="item" style="margin-left:24px">左键拖拽：旋转 / 滚轮：缩放 / 右键拖拽：倾斜</div>
-      </div>
+  <!-- 底部时间轴 -->
+  <div id="sv-footer" class="sv-hud">
+    <div class="sv-timeline-row">
+      <button id="sv-play" class="sv-btn" style="border-radius:50%;width:40px;height:40px;padding:0;flex:none;">▶</button>
+      <input id="sv-timeline" type="range" min="0" max="11" value="0" step="1" />
+      <span id="sv-time">--:--</span>
     </div>
+    <div class="sv-legend">
+      <div class="item"><div class="dot" style="background:var(--sv-safe)"></div>安全 &lt;30</div>
+      <div class="item"><div class="dot" style="background:var(--sv-warn)"></div>注意 30-45</div>
+      <div class="item"><div class="dot" style="background:var(--sv-danger)"></div>危险 &gt;45</div>
+      <div class="item" style="margin-left:auto;">dBZ</div>
+    </div>
+  </div>
 
-    <div id="sv-toast"></div>
+  <!-- Toast -->
+  <div id="sv-toast"></div>
 
-    <script type="module" src="./main.js"></script>
-  </body>
+  <!-- 加载 -->
+  <div id="loading">
+    <div class="sv-loading-spinner"></div>
+    <span>初始化三维气象引擎…</span>
+  </div>
+
+  <!-- 主入口 -->
+  <script type="module" src="./main.js"></script>
+</body>
 </html>
