@@ -1,0 +1,55 @@
+{
+  "name": "skyvortex-engine",
+  "version": "0.1.0",
+  "description": "SkyVortex - 飞行员三维立体天气云图引擎",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./src/*": "./src/*",
+    "./public/*": "./public/*"
+  },
+  "files": [
+    "src",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "demo": "vite",
+    "check": "node --check src/index.js",
+    "bundle-shaders": "node scripts/bundle-shaders.mjs",
+    "prepublishOnly": "npm run bundle-shaders"
+  },
+  "dependencies": {
+    "dat.gui": "^0.7.9"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  },
+  "peerDependencies": {
+    "three": ">=0.150.0",
+    "cesium": ">=1.132.0"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": false
+    }
+  },
+  "keywords": [
+    "cesium",
+    "volumetric-clouds",
+    "atmosphere",
+    "bruneton",
+    "aerial-perspective",
+    "lens-flare",
+    "three-geospatial"
+  ],
+  "license": "MIT",
+  "author": "",
+  "homepage": "https://github.com/yuwoniu03/cesium-clouds-atmosphere#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuwoniu03/cesium-clouds-atmosphere.git"
+  }
+}

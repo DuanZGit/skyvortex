@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-07-28T20:00:00Z",
+  "bounds": {
+    "west": 120.5,
+    "south": 30.5,
+    "east": 122.5,
+    "north": 32.0,
+    "center": [
+      121.5,
+      31.2
+    ]
+  },
+  "width": 512,
+  "height": 512,
+  "layers_keys": [
+    "cappi_1km",
+    "cappi_3km",
+    "cappi_6km"
+  ]
+}

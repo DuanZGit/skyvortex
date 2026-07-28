@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SkyVortex · 飞行员立体天气云图</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/cesium@1.132.0/Build/Cesium/Widgets/widgets.css"
+    />
+    <script>
+      window.CESIUM_BASE_URL = "https://unpkg.com/cesium@1.132.0/Build/Cesium/";
+    </script>
+    <script src="https://unpkg.com/cesium@1.132.0/Build/Cesium/Cesium.js"></script>
+    <style>
+      :root {
+        --sv-bg: rgba(8, 16, 28, 0.85);
+        --sv-border: rgba(86, 158, 240, 0.4);
+        --sv-text: #d8e6f8;
+        --sv-accent: #56a8f0;
+        --sv-warn: #ff7043;
+        --sv-danger: #f44336;
+        --sv-safe: #66bb6a;
+      }
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: var(--sv-text); }
+      #cesiumContainer { width: 100%; height: 100%; }
+
+      /* 隐藏 Cesium 版权 */
+      .cesium-viewer-bottom, .cesium-widget-credits { display: none !important; }
+
+      /* 加载提示 */
+      #loading {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        background: #000; z-index: 100; transition: opacity 0.6s; font-size: 16px; letter-spacing: 2px;
+      }
+      #loading.hidden { opacity: 0; pointer-events: none; }
+
+      /* 顶部 HUD */
+      .sv-hud {
+        position: fixed; backdrop-filter: blur(8px);
+        background: var(--sv-bg); border: 1px solid var(--sv-border);
+        border-radius: 8px; padding: 12px 16px;
+      }
+      #sv-header {
+        top: 12px; left: 12px; right: 12px;
+        display: flex; justify-content: space-between; align-items: center;
+      }
+      #sv-header .title {
+        font-size: 16px; font-weight: 600; color: var(--sv-accent);
+        display: flex; align-items: center; gap: 8px;
+      }
+      #sv-header .title::before {
+        content: ""; display: inline-block; width: 10px; height: 10px;
+        background: var(--sv-accent); border-radius: 50%;
+        box-shadow: 0 0 12px var(--sv-accent);
+      }
+      #sv-header .status {
+        font-size: 12px; color: #8aa3c4;
+        font-family: "SF Mono", Consolas, monospace;
+      }
+
+      /* 左侧面板：区域 + 强度列表 */
+      #sv-panel {
+        top: 70px; left: 12px; width: 260px;
+        max-height: calc(100vh - 90px); overflow-y: auto;
+      }
+      #sv-panel h3 {
+        margin: 0 0 8px; font-size: 12px; font-weight: 600;
+        color: var(--sv-accent); text-transform: uppercase; letter-spacing: 1px;
+      }
+      .sv-row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+      .sv-btn {
+        flex: 1; padding: 6px 10px; font-size: 12px;
+        background: rgba(86, 168, 240, 0.1); color: var(--sv-text);
+        border: 1px solid var(--sv-border); border-radius: 4px;
+        cursor: pointer; transition: all 0.15s; min-width: 60px;
+      }
+      .sv-btn:hover { background: rgba(86, 168, 240, 0.25); }
+      .sv-btn.active { background: var(--sv-accent); color: #001428; font-weight: 600; }
+
+      .sv-storm-list { display: flex; flex-direction: column; gap: 6px; }
+      .sv-storm {
+        background: rgba(255, 255, 255, 0.04); border-left: 3px solid var(--sv-safe);
+        padding: 8px 10px; border-radius: 4px; font-size: 12px;
+        cursor: pointer; transition: all 0.15s;
+      }
+      .sv-storm:hover { background: rgba(86, 168, 240, 0.12); }
+      .sv-storm.warn { border-left-color: var(--sv-warn); }
+      .sv-storm.danger { border-left-color: var(--sv-danger); }
+      .sv-storm .id { font-weight: 600; color: var(--sv-accent); font-family: "SF Mono", monospace; }
+      .sv-storm .meta { color: #8aa3c4; font-size: 11px; margin-top: 2px; }
+
+      /* 右侧面板：飞行视角 */
+      #sv-fpv {
+        top: 70px; right: 12px; width: 220px;
+      }
+      #sv-fpv h3 { margin: 0 0 8px; font-size: 12px; color: var(--sv-accent); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+      .sv-fpv-btn {
+        display: block; width: 100%; padding: 8px 10px; margin-bottom: 6px;
+        background: rgba(86, 168, 240, 0.1); color: var(--sv-text);
+        border: 1px solid var(--sv-border); border-radius: 4px;
+        cursor: pointer; font-size: 12px; text-align: left; transition: all 0.15s;
+      }
+      .sv-fpv-btn:hover { background: rgba(86, 168, 240, 0.25); }
+      .sv-fpv-btn .icon { margin-right: 6px; }
+
+      /* 底部：图例 + 提示 */
+      #sv-footer {
+        bottom: 12px; left: 12px; right: 12px; text-align: center;
+        font-size: 11px; color: #6c87a8;
+        background: rgba(8, 16, 28, 0.7); padding: 6px 12px; border-radius: 4px;
+      }
+      .sv-legend { display: inline-flex; gap: 16px; align-items: center; }
+      .sv-legend .item { display: flex; align-items: center; gap: 4px; }
+      .sv-legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+      /* Toast 提示 */
+      #sv-toast {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.9); border: 1px solid var(--sv-accent);
+        color: var(--sv-text); padding: 12px 20px; border-radius: 6px;
+        font-size: 13px; z-index: 1000; opacity: 0; transition: opacity 0.3s;
+        pointer-events: none;
+      }
+      #sv-toast.show { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <div id="cesiumContainer"></div>
+    <div id="loading">SkyVortex · 初始化三维气象引擎…</div>
+
+    <!-- 顶部 HUD -->
+    <div id="sv-header" class="sv-hud">
+      <div class="title">SkyVortex · 飞行员立体天气云图</div>
+      <div class="status" id="sv-status">就绪</div>
+    </div>
+
+    <!-- 左侧：区域 + 雷雨列表 -->
+    <div id="sv-panel" class="sv-hud">
+      <h3>区域</h3>
+      <div class="sv-row" id="sv-regions">
+        <button class="sv-btn active" data-region="beijing">北京</button>
+        <button class="sv-btn" data-region="shanghai">上海</button>
+        <button class="sv-btn" data-region="guangzhou">广州</button>
+      </div>
+      <h3 style="margin-top:16px">检测到的雷暴单体</h3>
+      <div class="sv-storm-list" id="sv-storms">
+        <!-- 由 JS 填充 -->
+      </div>
+    </div>
+
+    <!-- 右侧：飞行视角 -->
+    <div id="sv-fpv" class="sv-hud">
+      <h3>飞行视角</h3>
+      <button class="sv-fpv-btn" data-fpv="pilot"><span class="icon">✈️</span>飞行员俯瞰 (10km)</button>
+      <button class="sv-fpv-btn" data-fpv="tower"><span class="icon">🗼</span>塔台视角 (1km)</button>
+      <button class="sv-fpv-btn" data-fpv="side"><span class="icon">↔️</span>侧面剖视</button>
+      <button class="sv-fpv-btn" data-fpv="top"><span class="icon">⬇️</span>正上方俯视</button>
+      <h3 style="margin-top:16px">操作</h3>
+      <button class="sv-fpv-btn" id="sv-refresh"><span class="icon">🔄</span>刷新雷达数据</button>
+      <button class="sv-fpv-btn" id="sv-toggle-clouds"><span class="icon">☁️</span>云体显隐</button>
+    </div>
+
+    <!-- 底部图例 -->
+    <div id="sv-footer" class="sv-hud">
+      <div class="sv-legend">
+        <div class="item"><div class="dot" style="background:#66bb6a"></div>安全 &lt;30 dBZ</div>
+        <div class="item"><div class="dot" style="background:#ff7043"></div>注意 30-45 dBZ</div>
+        <div class="item"><div class="dot" style="background:#f44336"></div>危险 &gt;45 dBZ</div>
+        <div class="item" style="margin-left:24px">左键拖拽：旋转 / 滚轮：缩放 / 右键拖拽：倾斜</div>
+      </div>
+    </div>
+
+    <div id="sv-toast"></div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
