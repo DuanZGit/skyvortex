@@ -167,6 +167,146 @@ def synthesize_mock_tile(
     )
 
 
+def synthesize_time_series(
+    bounds: dict,
+    start_time: str,
+    n_frames: int = 12,
+    interval_min: int = 5,
+    size: int = 512,
+    seed: int = 42,
+) -> list[dict]:
+    """
+    生成多帧雷暴演变时序。
+
+    模拟真实对流天气过程：
+    - 单体沿一致方向漂移（默认 NE 30 km/h）
+    - 强度经历 发展 → 成熟 → 消散 生命周期
+    - 新单体在中后期触发
+
+    返回帧清单 [{frame, timestamp, file, storms: [...]}]
+    """
+    from datetime import datetime, timedelta, timezone
+
+    rng = np.random.default_rng(seed)
+    t0 = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+
+    # 定义 3 个初始单体 + 1 个后续触发
+    storms_init = []
+    center = bounds["center"]
+    for i in range(3):
+        storms_init.append({
+            "id": f"CB-{i+1:02d}",
+            "lon0": center[0] + rng.uniform(-1.2, 1.2),
+            "lat0": center[1] + rng.uniform(-0.8, 0.8),
+            "drift_lon": rng.uniform(0.01, 0.04),   # 度/帧（NE 向）
+            "drift_lat": rng.uniform(0.005, 0.02),
+            "peak_dbz": rng.uniform(45, 62),
+            "rx": rng.uniform(0.3, 0.7),
+            "ry": rng.uniform(0.3, 0.7),
+            "peak_frame": rng.integers(3, 8),        # 成熟期帧
+            "lifecycle": rng.integers(8, 14),         # 总寿命帧数
+            "top_peak": rng.uniform(11000, 14500),
+        })
+    # 后续触发的单体
+    storms_init.append({
+        "id": "CB-04",
+        "lon0": center[0] + rng.uniform(-0.5, 0.5),
+        "lat0": center[1] + rng.uniform(-0.5, 0.5),
+        "drift_lon": rng.uniform(0.01, 0.03),
+        "drift_lat": rng.uniform(0.005, 0.015),
+        "peak_dbz": rng.uniform(38, 50),
+        "rx": rng.uniform(0.2, 0.5),
+        "ry": rng.uniform(0.2, 0.5),
+        "peak_frame": rng.integers(7, 10),
+        "lifecycle": rng.integers(6, 10),
+        "top_peak": rng.uniform(9000, 12000),
+        "spawn_frame": 5,  # 第 5 帧才出现
+    })
+
+    w, h = size, size
+    west, south = bounds["west"], bounds["south"]
+    east, north = bounds["east"], bounds["north"]
+    lon_grid = np.linspace(west, east, w)
+    lat_grid = np.linspace(south, north, h)
+    lon2d, lat2d = np.meshgrid(lon_grid, lat_grid)
+
+    manifest = []
+
+    for fi in range(n_frames):
+        t = t0 + timedelta(minutes=fi * interval_min)
+        ts = t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        cappi_1km = np.zeros((h, w), dtype=np.float32)
+        cappi_3km = np.zeros((h, w), dtype=np.float32)
+        cappi_6km = np.zeros((h, w), dtype=np.float32)
+        cloud_top = np.zeros((h, w), dtype=np.float32)
+        frame_storms = []
+
+        for s in storms_init:
+            spawn = s.get("spawn_frame", 0)
+            if fi < spawn:
+                continue
+            age = fi - spawn
+            if age >= s["lifecycle"]:
+                continue
+
+            # 生命周期强度曲线：sin 包络
+            phase = age / s["lifecycle"]
+            intensity = np.sin(phase * np.pi)  # 0→1→0
+            dbz = s["peak_dbz"] * intensity
+
+            # 位置漂移
+            cx = s["lon0"] + s["drift_lon"] * age
+            cy = s["lat0"] + s["drift_lat"] * age
+
+            # 半径随发展期扩大
+            spread = 1.0 + 0.3 * intensity
+            rx, ry = s["rx"] * spread, s["ry"] * spread
+
+            dx = (lon2d - cx) / rx
+            dy = (lat2d - cy) / ry
+            r2 = dx * dx + dy * dy
+
+            low = dbz * np.exp(-r2 * 0.5)
+            mid = dbz * 1.1 * np.exp(-r2 * 1.5)
+            high_core = dbz * 0.9 * np.exp(-r2 * 2.5)
+            anvil = (dbz - 15) * np.exp(-r2 * 0.3) * 0.6 * intensity
+            high = np.maximum(high_core, anvil)
+
+            cappi_1km = np.maximum(cappi_1km, low)
+            cappi_3km = np.maximum(cappi_3km, mid)
+            cappi_6km = np.maximum(cappi_6km, high)
+
+            top = s["top_peak"] * intensity
+            local_top = top * 0.5 + top * 0.5 * np.exp(-r2 * 1.2)
+            cloud_top = np.maximum(cloud_top, local_top)
+
+            if dbz > 20:
+                frame_storms.append({
+                    "id": s["id"],
+                    "lon": round(cx, 3), "lat": round(cy, 3),
+                    "dbz": round(dbz, 1),
+                    "top": round(top, 0),
+                    "level": "danger" if dbz > 45 else "warn" if dbz > 30 else "safe",
+                })
+
+        # 底噪
+        cappi_1km += np.maximum(rng.normal(6, 2, (h, w)).astype(np.float32), 0)
+
+        tile = WeatherTile(
+            timestamp=ts, bounds=bounds, width=w, height=h,
+            layers={"cappi_1km": cappi_1km, "cappi_3km": cappi_3km, "cappi_6km": cappi_6km},
+            cloud_top_height=cloud_top,
+        )
+        manifest.append({
+            "frame": fi,
+            "timestamp": ts,
+            "file": f"frame_{fi:03d}.png",
+            "storms": frame_storms,
+        })
+        yield tile, manifest[-1]
+
+
 def fetch_cma_cappi(region: str = "beijing") -> Optional[WeatherTile]:
     """
     从中国气象局下载雷达 CAPPI 拼图。
