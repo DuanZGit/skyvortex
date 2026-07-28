@@ -22,15 +22,29 @@ const REGIONS = {
 let currentRegion = "beijing";
 let timeline = null;
 
-// ── Toast ────────────────────────────────────────────────────────────────
+// ── 工具函数 ────────────────────────────────────────────────────────────
 
 let toastTimer = null;
 function toast(msg) {
   const el = document.getElementById("sv-toast");
+  if (!el) return;
   el.textContent = msg;
   el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+}
+
+/**
+ * 将 CloudTextureSynthesizer 输出的 RGBA 数据编码为 PNG blob URL
+ */
+async function textureToBlobUrl(tex) {
+  const canvas = new OffscreenCanvas(tex.width, tex.height);
+  const ctx = canvas.getContext("2d");
+  const imgData = ctx.createImageData(tex.width, tex.height);
+  imgData.data.set(tex.rgba);
+  ctx.putImageData(imgData, 0, 0);
+  const pngBlob = await canvas.convertToBlob({ type: "image/png" });
+  return URL.createObjectURL(pngBlob);
 }
 
 // ── 全局错误捕获 ─────────────────────────────────────────────────────────
@@ -47,27 +61,27 @@ let viewer, engine;
 // ── Cesium Viewer ────────────────────────────────────────────────────────
 
 try {
-viewer = new Cesium.Viewer("cesiumContainer", {
-  baseLayer: Cesium.ImageryLayer.fromProviderAsync(
-    Cesium.TileMapServiceImageryProvider.fromUrl(
-      Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
-    )
-  ),
-  baseLayerPicker: false, geocoder: false, homeButton: false,
-  sceneModePicker: false, navigationHelpButton: false,
-  animation: false, timeline: false, fullscreenButton: false,
-  infoBox: false, selectionIndicator: false,
-  skyBox: false, skyAtmosphere: false,
-  requestRenderMode: false,
-  contextOptions: { webgl: { alpha: true } },
-});
+  viewer = new Cesium.Viewer("cesiumContainer", {
+    baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+      Cesium.TileMapServiceImageryProvider.fromUrl(
+        Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
+      )
+    ),
+    baseLayerPicker: false, geocoder: false, homeButton: false,
+    sceneModePicker: false, navigationHelpButton: false,
+    animation: false, timeline: false, fullscreenButton: false,
+    infoBox: false, selectionIndicator: false,
+    skyBox: false, skyAtmosphere: false,
+    requestRenderMode: false,
+    contextOptions: { webgl: { alpha: true } },
+  });
 
-viewer.camera.setView({
-  destination: Cesium.Cartesian3.fromDegrees(
-    REGIONS[currentRegion].center[0], REGIONS[currentRegion].center[1], REGIONS[currentRegion].alt
-  ),
-  orientation: { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO * 0.45, roll: 0 },
-});
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(
+      REGIONS[currentRegion].center[0], REGIONS[currentRegion].center[1], REGIONS[currentRegion].alt
+    ),
+    orientation: { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO * 0.45, roll: 0 },
+  });
 } catch (err) {
   window.__init_error = "Viewer init: " + err.message;
   throw err;
@@ -113,6 +127,7 @@ let currentPerformance = "high"; // 默认高性能
 
 async function loadSigmets() {
   const container = document.getElementById("sv-sigmets");
+  if (!container) return;
   try {
     const sigmets = await provider.getSigmetsForRegion(currentRegion);
     if (!sigmets.length) {
@@ -138,6 +153,7 @@ async function loadSigmets() {
 
 async function loadForecast() {
   const el = document.getElementById("sv-forecast");
+  if (!el) return;
   try {
     const summary = await provider.getFlightWeatherSummary(currentRegion, 3);
     el.innerHTML = summary.map(d => `
@@ -161,7 +177,9 @@ async function loadForecast() {
 async function loadRegion(region) {
   currentRegion = region;
   const r = REGIONS[region];
-  document.getElementById("sv-status").textContent = "● 加载中…";
+  const statusEl = document.getElementById("sv-status");
+  if (!statusEl) return;
+  statusEl.textContent = "● 加载中…";
 
   try {
     // 1. 数据层：生成 12 帧时序
@@ -169,13 +187,7 @@ async function loadRegion(region) {
 
     // 2. 合成层：第一帧 → RGBA → PNG blob
     const tex = synth.synthesize(frames[0]);
-    const canvas = new OffscreenCanvas(tex.width, tex.height);
-    const ctx = canvas.getContext("2d");
-    const imgData = ctx.createImageData(tex.width, tex.height);
-    imgData.data.set(tex.rgba);
-    ctx.putImageData(imgData, 0, 0);
-    const pngBlob = await canvas.convertToBlob({ type: "image/png" });
-    const url = URL.createObjectURL(pngBlob);
+    const url = await textureToBlobUrl(tex);
 
     // 3. 渲染层：替换天气纹理
     await engine.swapWeatherTexture(url);
@@ -201,12 +213,12 @@ async function loadRegion(region) {
     // 7. 视角
     engine.setPilotView(r.center[0], r.center[1], r.alt);
 
-    document.getElementById("sv-status").textContent = "● 实时";
+    if (statusEl) statusEl.textContent = "● 实时";
     toast(`切换至 ${r.name}`);
   } catch (err) {
     console.error("loadRegion failed:", err);
     toast(`加载失败（${region}）`);
-    document.getElementById("sv-status").textContent = "● 错误";
+    if (statusEl) statusEl.textContent = "● 错误";
   }
 }
 
@@ -215,6 +227,7 @@ async function loadRegion(region) {
 function renderStormsFromTracker(frame) {
   const storms = stormTracker.detect(frame);
   const container = document.getElementById("sv-storms");
+  if (!container) return;
   if (!storms.length) {
     container.innerHTML = `<div style="font-size:11px;color:#6c87a8;padding:4px;">本时次无强回波</div>`;
     return;
@@ -243,14 +256,17 @@ function renderStormsFromTracker(frame) {
 
 function updateTimeDisplay() {
   if (!timeline) return;
+  const el = document.getElementById("sv-time");
+  if (!el) return;
   const d = new Date(timeline.currentTime);
-  document.getElementById("sv-time").textContent =
+  el.textContent =
     d.getHours().toString().padStart(2,"0") + ":" + d.getMinutes().toString().padStart(2,"0");
 }
 
 let playTimer = null;
 function togglePlay() {
   const btn = document.getElementById("sv-play");
+  if (!btn) return;
   if (playTimer) {
     clearInterval(playTimer);
     playTimer = null;
@@ -272,20 +288,15 @@ function togglePlay() {
 async function seekToFrame(idx) {
   if (!timeline) return;
   timeline.seek(idx);
-  document.getElementById("sv-timeline").value = idx;
+  const slider = document.getElementById("sv-timeline");
+  if (slider) slider.value = idx;
   updateTimeDisplay();
 
   const frame = timeline.currentFrame;
   if (!frame) return;
 
   const tex = synth.synthesize(frame.data);
-  const c = new OffscreenCanvas(tex.width, tex.height);
-  const cx = c.getContext("2d");
-  const id = cx.createImageData(tex.width, tex.height);
-  id.data.set(tex.rgba);
-  cx.putImageData(id, 0, 0);
-  const png = await c.convertToBlob({ type: "image/png" });
-  const url = URL.createObjectURL(png);
+  const url = await textureToBlobUrl(tex);
   await engine.swapWeatherTexture(url);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 
