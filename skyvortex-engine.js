@@ -107,17 +107,19 @@ export class SkyVortexEngine {
     if (!this.pipeline) throw new Error("Engine not initialized");
     const resp = await fetch(url);
     const blob = await resp.blob();
-    const img = new Image();
-    const blobUrl = URL.createObjectURL(blob);
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = () => reject(new Error("weather texture load failed"));
-    });
-    img.src = blobUrl;
+    
+    // 使用 createImageBitmap + HTMLCanvasElement，绕过 headless 浏览器 blob URL 限制
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
 
-    const ctx = this.viewer.scene.context;
+    const gl = this.viewer.scene.context;
     const newTex = new Cesium.Texture({
-      context: ctx, source: img,
+      context: gl, source: canvas,
       sampler: new Cesium.Sampler({
         minificationFilter: Cesium.TextureMinificationFilter.LINEAR,
         magnificationFilter: Cesium.TextureMagnificationFilter.LINEAR,
@@ -137,8 +139,6 @@ export class SkyVortexEngine {
     if (old && old.destroy) {
       try { old.destroy(); } catch (e) { /* ignore */ }
     }
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-    window.__swap_step = 'done';
     console.log(`[SkyVortex] weather texture swapped → ${url}`);
   }
 

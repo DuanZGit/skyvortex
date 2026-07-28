@@ -108,6 +108,31 @@ provider.setAdapter(new MockProvider(42));
 const synth = new CloudTextureSynthesizer();
 const stormTracker = new StormTracker();
 
+// ── SIGMET 航空警告（NOAA 免费数据） ──────────────────────────────────
+
+async function loadSigmets() {
+  const container = document.getElementById("sv-sigmets");
+  try {
+    const sigmets = await provider.getSigmetsForRegion(currentRegion);
+    if (!sigmets.length) {
+      container.innerHTML = `<div style="font-size:11px;color:#6c87a8;padding:4px;">当前区域无 SIGMET 警告</div>`;
+      return;
+    }
+    container.innerHTML = sigmets.slice(0, 5).map(s => `
+      <div class="sv-storm ${s.level}">
+        <div class="id">${s.label}</div>
+        <div class="meta">
+          ${s.fir} · ${s.startTime?.slice(11,16) || '--'}-${s.endTime?.slice(11,16) || '--'} UTC
+          ${s.atsu ? '· ' + s.atsu : ''}
+        </div>
+      </div>
+    `).join("");
+  } catch (err) {
+    console.error("SIGMET load failed:", err);
+    container.innerHTML = `<div style="font-size:11px;color:#6c87a8;padding:4px;">SIGMET 加载失败</div>`;
+  }
+}
+
 // ── 加载区域时序数据 ────────────────────────────────────────────────────
 
 async function loadRegion(region) {
@@ -144,7 +169,10 @@ async function loadRegion(region) {
     // 5. 分析层：识别单体
     renderStormsFromTracker(frames[Math.floor(frames.length / 2)]);
 
-    // 6. 视角
+    // 6. 航空警告（NOAA SIGMET）
+    loadSigmets();
+
+    // 7. 视角
     engine.setPilotView(r.center[0], r.center[1], r.alt);
 
     document.getElementById("sv-status").textContent = "● 实时";

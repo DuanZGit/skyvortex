@@ -8,14 +8,19 @@
  *   getFrame(region, time?) → WeatherFrame
  *   getTimeSeries(region, start, count, interval?) → WeatherFrame[]
  *   getRegions() → string[]
+ *   getSigmets(lat?, lon?) → Sigmet[]
  *
  * 适配器：
  *   MockProvider    — 离线开发，合成雷暴数据
  *   CMAProvider     — 中国气象局雷达拼图（P1）
  *   CommercialProvider — 和风/象辑 API（P2）
+ *   NoaaProvider    — NOAA 全球航空天气（SIGMET/METAR/雷达）
  */
 
 /** @import { WeatherFrame, GeoBounds } from './types.js' */
+
+import { MockProvider } from "./MockProvider.js";
+import { NoaaProvider } from "./NoaaProvider.js";
 
 export class WeatherDataProvider {
   /** @type {Map<string, GeoBounds>} */
@@ -23,6 +28,9 @@ export class WeatherDataProvider {
 
   /** @type {import('./MockProvider.js').MockProvider | null} */
   #adapter = null;
+
+  /** @type {NoaaProvider} */
+  #noaa;
 
   constructor() {
     this.#regions.set("beijing", {
@@ -37,6 +45,7 @@ export class WeatherDataProvider {
       west: 112.5, south: 22.0, east: 114.5, north: 24.0,
       center: [113.3, 23.1],
     });
+    this.#noaa = new NoaaProvider();
   }
 
   /**
@@ -45,6 +54,7 @@ export class WeatherDataProvider {
    */
   setAdapter(adapter) {
     this.#adapter = adapter;
+    return this;
   }
 
   /** @returns {string[]} 可用区域列表 */
@@ -83,5 +93,54 @@ export class WeatherDataProvider {
     const bounds = this.#regions.get(region);
     if (!bounds) throw new Error(`Unknown region: ${region}`);
     return this.#adapter.getTimeSeries(bounds, start, count, intervalMin);
+  }
+
+  // ── NOAA 航空天气（接缝 5：独立数据通道）───────────────────────────
+
+  /**
+   * 获取全球 SIGMET 列表
+   * @returns {Promise<Array<{id,fir,label,level,startTime,endTime,geometry}>>}
+   */
+  async getSigmets() {
+    return this.#noaa.fetchSigmets();
+  }
+
+  /**
+   * 检查坐标是否在 SIGMET 区域内
+   * @param {number} lat
+   * @param {number} lon
+   * @returns {Promise<Array>}
+   */
+  async checkSigmetsAt(lat, lon) {
+    return this.#noaa.checkPoint(lat, lon);
+  }
+
+  /**
+   * 获取区域附近的 SIGMET（返回区域内 + 邻近的）
+   * @param {string} region
+   * @returns {Promise<Array>}
+   */
+  async getSigmetsForRegion(region) {
+    const bounds = this.#regions.get(region);
+    if (!bounds) return [];
+    const center = bounds.center;
+    const hits = await this.#noaa.checkPoint(center[1], center[0]);
+    if (hits.length > 0) return hits;
+
+    // 如果中心点没命中，取区域四角
+    const corners = [
+      [bounds.west, bounds.south],
+      [bounds.east, bounds.north],
+      [bounds.west, bounds.north],
+      [bounds.east, bounds.south],
+    ];
+    const allHits = [];
+    for (const [lon, lat] of corners) {
+      const hs = await this.#noaa.checkPoint(lat, lon);
+      for (const h of hs) {
+        if (!allHits.find(x => x.id === h.id)) allHits.push(h);
+      }
+    }
+    return allHits;
   }
 }
