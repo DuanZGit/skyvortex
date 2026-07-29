@@ -13,6 +13,7 @@
 // ── 数据层 ──
 export { WeatherDataProvider } from "./data/WeatherDataProvider.js";
 export { MockProvider } from "./data/MockProvider.js";
+export { HimawariProvider } from "./data/HimawariProvider.js";
 export { NoaaProvider } from "./data/NoaaProvider.js";
 export { OpenMeteoProvider } from "./data/OpenMeteoProvider.js";
 

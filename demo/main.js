@@ -9,7 +9,7 @@
 
 import { SkyVortexEngine, detectDevicePerformance } from "../skyvortex-engine.js";
 import {
-  WeatherDataProvider, MockProvider,
+  WeatherDataProvider, MockProvider, HimawariProvider,
   CloudTextureSynthesizer, StormTracker, FlightPathProfiler, TimelineController,
 } from "../src/index.js";
 
@@ -38,7 +38,12 @@ const AIRPORTS = {
 };
 
 const FRAME_COUNT = 12;      // 时间轴帧数（与 #sv-timeline max=11 对应）
-const FRAME_INTERVAL_MIN = 5;
+
+/** 数据源：mock = 内置雷暴生成器；himawari = 葵花 9 号 B13 红外实况（NICT，10min 一帧） */
+const DATA_SOURCES = {
+  mock:     { name: "模拟雷暴", adapter: () => new MockProvider(42),    intervalMin: 5,  layerTag: "CAPPI" },
+  himawari: { name: "葵花卫星", adapter: () => new HimawariProvider(), intervalMin: 10, layerTag: "卫星 IR" },
+};
 
 // ── 模块实例与状态 ─────────────────────────────────────────────────
 
@@ -54,6 +59,7 @@ let engine = null;
 let engineReady = false;
 
 let currentRegion = "beijing";
+let currentSource = "mock";
 let currentPerformance = "high";
 let cloudsVisible = true;
 
@@ -168,11 +174,12 @@ function setFlightView(mode) {
 
 async function loadRegion(region) {
   const version = ++loadVersion;
+  const src = DATA_SOURCES[currentSource];
   setStatus("加载中…");
-  $("sv-location").textContent = `${REGIONS[region].name} · CAPPI`;
+  $("sv-location").textContent = `${REGIONS[region].name} · ${src.layerTag}`;
 
   const frames = await provider.getTimeSeries(
-    region, new Date().toISOString(), FRAME_COUNT, FRAME_INTERVAL_MIN
+    region, new Date().toISOString(), FRAME_COUNT, src.intervalMin
   );
   if (version !== loadVersion) return; // 已被更新的加载取代
 
@@ -190,7 +197,7 @@ async function loadRegion(region) {
   }
 
   renderStorms();
-  setStatus("实时");
+  setStatus(currentSource === "himawari" ? "卫星实况" : "实时");
 }
 
 function onTimelineFrame(index, frame) {
@@ -432,7 +439,12 @@ function bindEvents() {
         c.classList.toggle("active", c === chip));
       flyToRegion(region);
       toast(`切换到${REGIONS[region].name}`);
-      await loadRegion(region);
+      try {
+        await loadRegion(region);
+      } catch (err) {
+        console.error("loadRegion failed:", err);
+        setStatus("数据错误", "error");
+      }
       loadSigmets();
       loadForecast();
     });
@@ -466,6 +478,26 @@ function bindEvents() {
     cloudsVisible = !cloudsVisible;
     engine.setCloudsVisible(cloudsVisible);
     toast(cloudsVisible ? "云体已显示" : "云体已隐藏");
+  });
+
+  // 数据源切换（设置面板）
+  document.querySelectorAll("#sv-source .sv-chip").forEach(chip => {
+    chip.addEventListener("click", async () => {
+      const source = chip.dataset.source;
+      if (source === currentSource) return;
+      currentSource = source;
+      document.querySelectorAll("#sv-source .sv-chip").forEach(c =>
+        c.classList.toggle("active", c === chip));
+      provider.setAdapter(DATA_SOURCES[source].adapter());
+      toast(`数据源：${DATA_SOURCES[source].name}`);
+      try {
+        await loadRegion(currentRegion);
+      } catch (err) {
+        console.error("Source switch failed:", err);
+        setStatus("数据错误", "error");
+        toast(currentSource === "himawari" ? "卫星数据获取失败（需网络）" : "数据加载失败");
+      }
+    });
   });
 
   // 刷新数据

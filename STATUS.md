@@ -1,5 +1,24 @@
 # SkyVortex 状态报告
 
+> 2026-07-29 · 葵花卫星实况接入（首个真实云图数据源）
+
+## ✅ 2026-07-29 葵花 9 号 B13 红外实况接入
+
+### 新增
+- `src/data/HimawariProvider.js`：NICT 葵花瓦片 → WeatherFrame 适配器
+  - GEOS 静止轨道投影（HRIT 常量，实测基准点验证：北京/东京/悉尼/广州）
+  - 关键发现：NICT B13 PNG 为灰度+alpha，**云信号在 alpha 通道**（0=晴空，~223=最冷云顶）
+  - IR 反演：alpha → 云顶高度（≤14km）+ 伪 dBZ（≤52），含晴空地板（防全域背景云）与对流地板
+  - 10 分钟槽位对齐，时间轴回放 12 帧 = 过去 2 小时实况
+- vite 代理 `/himawari` → `himawari8.nict.go.jp/img`（NICT 无 CORS 头；dev + preview 均生效）
+- 设置面板新增“📡 数据源”切换：模拟雷暴 / 葵花卫星实况（切换后重拉帧序列+重跟踪）
+
+### 验证证据
+- 单测 32/32 绿（新增 himawariProvider 13 用例：投影基准点/alpha 映射/槽位时间）
+- 浏览器端：13 个 NICT 请求 0 失败，StormTracker 从卫星帧识别出 7 个真实对流单体（峰值 CB-01 41 dBZ · 顶高 11.5km）
+- 渲染截图：docs/superpowers/verify-himawari.png（北京实况层积云场，卫星数据驱动体积云）
+- 已知局限：IR 伪雷达非真反射率，薄卷云会高估对流；真 CAPPI 仍需 CMA 授权（T2）
+
 > 2026-07-29 · 完整体开发（修复 + 性能 + 功能接通 + 工程化）
 
 ## ✅ 2026-07-29 完整体（设计文档：docs/superpowers/）

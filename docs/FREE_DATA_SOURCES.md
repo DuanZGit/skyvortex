@@ -1,7 +1,44 @@
 # SkyVortex 免费天气数据源汇总
 
-> 最后更新：2026-07-29
+> 最后更新：2026-07-29（增补：葵花卫星已接入，RainViewer 停服预警）
 > 按优先级排序，标注了接入难度和 SkyVortex P0 适用性
+
+---
+
+## 0. 葵花 8/9 号（Himawari）— ✅ 已接入（HimawariProvider）
+
+| 项目 | 详情 |
+|------|------|
+| **平台** | NICT Himawari Real-time Web（`himawari8.nict.go.jp`）/ AWS Open Data（`noaa-himawari9`） |
+| **数据类型** | B13 红外亮温瓦片、真彩色全圆盘（D531106）、L1b/L2 云产品（AWS） |
+| **覆盖范围** | 东亚全圆盘（星下点 140.7°E），**含中国全境** |
+| **更新频率** | 10 分钟，NICT 保留 24h |
+| **认证** | **无需注册、无需 key** |
+| **限制** | NICT 无 CORS 头，浏览器端需代理；非官方 SLA |
+
+**实测接入细节（重要，网上无文档）**
+```
+最新帧：GET /img/FULL_24h/latest.json → {"date":"2026-07-29 09:20:00"}（UTC）
+B13 瓦片：GET /img/FULL_24h/B13/{level}d/550/{YYYY}/{MM}/{DD}/{HHMMSS}_{x}_{y}.png
+  - level ∈ {4, 8}（16d 无 B13），全盘边长 = level × 550 px
+  - PNG 为灰度+alpha（colorType 4）：**云信号在 alpha 通道**（0=晴空，~223=最冷云顶）
+  - INFRARED_FULL 旧路径已下线（404）
+坐标：GEOS 静止轨道投影，HRIT 常量 CFAC/LFAC=20466275、COFF/LOFF=2750.5（@5500px，扫描角单位为度）
+```
+
+**SkyVortex 适用性**：⭐⭐⭐⭐⭐（已落地）
+- IR 亮温 → 云顶高度 → 伪 dBZ，驱动体积云实况渲染（`src/data/HimawariProvider.js`）
+- 10 分钟一帧，时间轴回放天然支持
+- 局限：不是雷达反射率，无法区分降水强度层次；薄卷云会高估对流
+
+---
+
+## ⚠️ 时效预警（2026-07）
+
+- **RainViewer API 已于 2026 年 1 月停服**——大量教程仍在推荐，勿踩坑。社区替代：LibreWXR
+- **LibreWXR**（`librewxr.net`）：开源自托管雷达 API，聚合 NOAA MRMS（北美）+ OPERA（欧洲）；**不覆盖中国**，国际航线可用
+- **NASA GIBS**：WMTS 全球卫星影像瓦片（MODIS/VIIRS 真彩色 + 云顶产品），免费无 key，Cesium 原生支持
+- **met.no**：挪威气象局全球预报 API，免费无 key（需 User-Agent 头），可作 Open-Meteo 备份
 
 ---
 
@@ -207,11 +244,11 @@ NOAA AviationWeather（SIGMET/METAR）+ Open-Meteo（全球云量）+ AVWX（航
 
 ## 下一步行动
 
-1. **注册 data.cma.cn** — 申请雷达 + 卫星数据权限
-2. **注册 Open-Meteo** — 获取商用 key（非商业无需）
-3. **注册星图云** — 获取风云四号 API Key
-4. **接入 NOAA SIGMET** — 零成本，立即可用
-5. **写数据适配器** — 在 `WeatherDataProvider` 中实现各数据源的 adapter
+1. ~~接入葵花 B13 伪雷达~~ ✅ 已完成（HimawariProvider，设置面板可切换）
+2. **注册 data.cma.cn** — 申请雷达 + 卫星数据权限（真反射率，替换伪雷达）
+3. **注册星图云** — 获取风云四号 API Key（与葵花交叉验证云顶）
+4. ~~接入 NOAA SIGMET~~ ✅ 已完成
+5. ~~写数据适配器~~ ✅ 已完成（Mock / Himawari / NOAA / Open-Meteo 四适配器）
 
 ---
 
@@ -219,6 +256,7 @@ NOAA AviationWeather（SIGMET/METAR）+ Open-Meteo（全球云量）+ AVWX（航
 
 | 数据源 | 雷达 | 卫星云图 | METAR/TAF | SIGMET | 费用 | 难度 |
 |--------|------|----------|-----------|--------|------|------|
+| 葵花 NICT | 伪雷达(IR) ✅已接入 | ✅ (B13/真彩) | ❌ | ❌ | 完全免费无注册 | 中（需代理+投影） |
 | CMA | ✅ | ✅ | ✅ | ✅ | 免费注册 | 中 |
 | 星图云 | ❌ | ✅ (FY4) | ❌ | ❌ | 免费额度 | 低 |
 | NOAA | ✅ (美) | ✅ | ✅ | ✅ | 完全免费 | 低 |
@@ -226,3 +264,5 @@ NOAA AviationWeather（SIGMET/METAR）+ Open-Meteo（全球云量）+ AVWX（航
 | Open-Meteo | ❌ | ❌ | ❌ | ❌ | 完全免费 | 低 |
 | OpenWeatherMap | ❌ | ✅ | ✅ | ❌ | 1K/天免费 | 低 |
 | 和风天气 | ❌ | ❌ | ✅ | ✅ | 免费开发版 | 低 |
+| LibreWXR | ✅ (欧美) | ❌ | ❌ | ❌ | 免费自托管 | 中 |
+| NASA GIBS | ❌ | ✅ (全球) | ❌ | ❌ | 完全免费 | 低 |

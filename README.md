@@ -126,6 +126,7 @@ tl.play();
 |------|--------|------|
 | P0 | Mock 生成器（离线，seed 可复现） | ✅ 已完成 |
 | P1 | Open-Meteo（免费无 key，航线端点天气快照） | ✅ 已接入 |
+| P1 | 葵花 9 号 B13 红外实况（NICT，免费无 key，云顶反演伪雷达） | ✅ 已接入 |
 | P1 | CMA 雷达拼图（nmc.cn，公开） | 🔜 待接入 |
 | P2 | 商业 API（和风 / 象辑） | 📋 规划中 |
 | P3 | 风云四号 IR 云顶反演 | 📋 规划中 |
@@ -137,9 +138,10 @@ tl.play();
 - [x] T1：时间轴动画（多帧播放 / 暂停 / 拖拽，TimelineController 接入 UI）
 - [x] T3：雷暴单体识别（连通域 + 质心 + 移速 + 30min 外推）
 - [x] T4：飞行路径垂直剖面（FlightPathProfiler + Open-Meteo 端点天气）
-- [x] 工程化：Vitest 单测（19 用例）+ build/preview 脚本
+- [x] 工程化：Vitest 单测（32 用例）+ build/preview 脚本
+- [x] T5'：葵花 9 号 IR 云顶反演实况（HimawariProvider，设置面板可切 Mock/卫星）
 - [ ] T2：真实 CAPPI 雷达拼图接入（需数据源授权）
-- [ ] T5：风云四号 IR 云顶反演
+- [ ] T5：风云四号 IR 云顶反演（与葵花交叉验证）
 - [ ] Capacitor 移动端打包
 
 ## 致谢

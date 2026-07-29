@@ -299,6 +299,15 @@
   </div>
   <!-- 设置面板 -->
   <div id="sv-settings-panel" class="sv-panel hidden">
+    <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">📡 数据源</div>
+    <div id="sv-source" style="display:flex;gap:8px;">
+      <button class="sv-chip active" data-source="mock">模拟雷暴</button>
+      <button class="sv-chip" data-source="himawari">葵花卫星实况</button>
+    </div>
+    <div style="font-size:11px;color:var(--sv-text-dim);margin:8px 0 16px;line-height:1.5;">
+      模拟雷暴：内置对流单体生成器，离线可用<br/>
+      葵花卫星：Himawari-9 B13 红外实况，10 分钟更新，云顶反演伪雷达（需网络）
+    </div>
     <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">⚙️ 性能模式</div>
     <div id="sv-perf" style="display:flex;gap:8px;">
       <button class="sv-chip active" data-perf="high">高</button>
@@ -375,6 +384,6 @@
   </script>
 
   <!-- 主入口 -->
-  <script type="module" src="./main.js?v=20260730-3"></script>
+  <script type="module" src="./main.js?v=20260730-4"></script>
 </body>
 </html>

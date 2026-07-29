@@ -3,5 +3,6 @@ dist/
 .vite/
 *.log
 .DS_Store
+.tmp-*
 demo/engine-base
 demo/weather

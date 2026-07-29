@@ -6,6 +6,15 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const engineBase = path.resolve(__dirname, "engine-base");
 
+/** NICT 葵花卫星瓦片无 CORS 头，浏览器端经本地代理访问（dev/preview 均生效） */
+const himawariProxy = {
+  "/himawari": {
+    target: "https://himawari8.nict.go.jp",
+    changeOrigin: true,
+    rewrite: (p) => p.replace(/^\/himawari/, "/img"),
+  },
+};
+
 const MIME = {
   ".bin": "application/octet-stream",
   ".png": "image/png",
@@ -71,6 +80,10 @@ export default defineConfig({
     fs: {
       allow: [__dirname, engineBase],
     },
+    proxy: himawariProxy,
+  },
+  preview: {
+    proxy: himawariProxy,
   },
   optimizeDeps: {
     include: ["three"],
