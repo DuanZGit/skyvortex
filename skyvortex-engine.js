@@ -198,6 +198,26 @@ export class SkyVortexEngine {
     for (let i = 0; i < layers.length; i++) {
       Object.assign(this.pipeline.params.layers[i], layers[i]);
     }
+    // 记录基准密度，供 setCloudDensity 全局缩放；换层配置后重放当前系数
+    this._baseDensityScales = this.pipeline.params.layers.map(l => Number(l.densityScale) || 0);
+    if (this._densityFactor != null && this._densityFactor !== 1) {
+      this.setCloudDensity(this._densityFactor);
+    }
+  }
+
+  /**
+   * 全局云体不透明度系数（1 = 层配置原值；<1 更通透，>1 更浓密）
+   * 乘在各层 densityScale 上，云影 pass 经 params 同步自动跟随
+   * @param {number} factor
+   */
+  setCloudDensity(factor) {
+    if (!this.pipeline) return;
+    this._densityFactor = factor;
+    const base = this._baseDensityScales
+      || (this._baseDensityScales = this.pipeline.params.layers.map(l => Number(l.densityScale) || 0));
+    this.pipeline.params.layers.forEach((l, i) => {
+      if (base[i]) l.densityScale = base[i] * factor;
+    });
   }
 
   /**

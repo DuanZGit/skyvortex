@@ -37,6 +37,35 @@ const AIRPORTS = {
   ZHHH: { name: "武汉天河", lon: 114.208, lat: 30.784 },
 };
 
+/** VOR/DME 导航台（坐标/频率源自 OurAirports 公开库，三个 demo 区域周边） */
+const NAVAIDS = [
+  // 北京区域
+  { id: "VYK", name: "大王庄", freq: "112.7", lon: 116.572, lat: 39.192 },
+  { id: "PEK", name: "官庄",   freq: "114.7", lon: 116.600, lat: 40.050 },
+  { id: "SZY", name: "沙子营", freq: "117.2", lon: 116.462, lat: 40.102 },
+  { id: "HUR", name: "怀柔",   freq: "113.6", lon: 116.748, lat: 40.330 },
+  { id: "TAJ", name: "天津",   freq: "112.1", lon: 117.358, lat: 39.107 },
+  // 上海区域
+  { id: "SHA", name: "虹桥",   freq: "117.2", lon: 121.332, lat: 31.200 },
+  { id: "PUD", name: "浦东",   freq: "116.9", lon: 121.780, lat: 31.168 },
+  { id: "HSH", name: "横沙",   freq: "114.4", lon: 121.843, lat: 31.368 },
+  { id: "NHW", name: "南汇",   freq: "114.6", lon: 121.573, lat: 31.082 },
+  { id: "JTN", name: "九亭",   freq: "109.6", lon: 121.340, lat: 31.125 },
+  { id: "NTG", name: "南通",   freq: "115.6", lon: 120.978, lat: 32.063 },
+  { id: "HGH", name: "杭州",   freq: "113.0", lon: 120.458, lat: 30.240 },
+  // 广州区域
+  { id: "POU", name: "平洲",   freq: "114.1", lon: 113.190, lat: 23.020 },
+  { id: "CEN", name: "岑村",   freq: "114.6", lon: 113.417, lat: 23.150 },
+  { id: "CON", name: "从化",   freq: "113.0", lon: 113.585, lat: 23.588 },
+  { id: "SHL", name: "石龙",   freq: "115.7", lon: 113.853, lat: 23.090 },
+  { id: "SZX", name: "深圳",   freq: "115.3", lon: 113.803, lat: 22.645 },
+  { id: "GLN", name: "观澜",   freq: "112.0", lon: 114.035, lat: 22.710 },
+  { id: "ZUH", name: "珠海",   freq: "116.7", lon: 113.467, lat: 22.222 },
+  { id: "GYA", name: "高要",   freq: "116.5", lon: 112.487, lat: 23.070 },
+  { id: "LMN", name: "龙门",   freq: "116.3", lon: 114.327, lat: 23.650 },
+  { id: "TAN", name: "源潭",   freq: "108.6", lon: 113.240, lat: 23.668 },
+];
+
 const FRAME_COUNT = 12;      // 时间轴帧数（与 #sv-timeline max=11 对应）
 
 /** 数据源：mock = 内置雷暴生成器；himawari = 葵花 9 号 B13 红外实况（NICT，10min 一帧） */
@@ -62,6 +91,10 @@ let currentRegion = "beijing";
 let currentSource = "mock";
 let currentPerformance = "high";
 let cloudsVisible = true;
+/** 机场/导航台标记图层 */
+let navDataSource = null;
+/** 当前光照模式："day"（锁定正午，默认）/ "live"（实况太阳） */
+let lightingMode = "day";
 
 /** @type {import('../src/data/types.js').WeatherFrame[]} */
 let weatherFrames = [];
@@ -123,9 +156,90 @@ function initViewer() {
     skyBox: false, skyAtmosphere: false,
     requestRenderMode: false,
     // preserveDrawingBuffer：支持截图导出（飞行前天气简报留存）
-    contextOptions: { webgl: { alpha: true, preserveDrawingBuffer: true } },
+    // alpha 必须为 false：云后处理把“云覆盖度”写进输出 alpha（TAA 历史校验用），
+    // 若 canvas 带透明度，云隙处 alpha≈0 会透出网页深色背景 → 云之间发黑
+    contextOptions: { webgl: { alpha: false, preserveDrawingBuffer: true } },
   });
+  // 俯仰控制：右键拖拽 = 调俯仰（Cesium 默认仅中键/Ctrl+拖拽，飞行员场景下不可发现）
+  const ssc = viewer.scene.screenSpaceCameraController;
+  ssc.tiltEventTypes = [
+    Cesium.CameraEventType.RIGHT_DRAG,
+    Cesium.CameraEventType.MIDDLE_DRAG,
+    Cesium.CameraEventType.PINCH,
+    { eventType: Cesium.CameraEventType.LEFT_DRAG, modifier: Cesium.KeyboardEventModifier.CTRL },
+  ];
+  ssc.zoomEventTypes = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
+  // 默认白天光照：真实时钟在傍晚/夜间会让云层无光照发黑，飞行简报场景下不可读
+  setLightingMode("day");
+  initNavMarkers();
   flyToRegion(currentRegion, false);
+}
+
+/** 光照模式：day = 锁定当天正午（云形态清晰可读）；live = 实况太阳位置（傍晚/夜间云会发暗） */
+function setLightingMode(mode) {
+  lightingMode = mode;
+  const clock = viewer.clock;
+  if (mode === "day") {
+    const noon = new Date();
+    noon.setHours(12, 0, 0, 0);
+    clock.currentTime = Cesium.JulianDate.fromDate(noon);
+    clock.shouldAnimate = false;
+  } else {
+    clock.currentTime = Cesium.JulianDate.now();
+    clock.multiplier = 1;
+    clock.shouldAnimate = true;
+  }
+}
+
+/** 机场 + VOR 导航台标记（独立 DataSource，可一键显隐） */
+function initNavMarkers() {
+  navDataSource = new Cesium.CustomDataSource("nav-markers");
+  const labelCommon = {
+    font: "600 12px 'JetBrains Mono', monospace",
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+    outlineColor: Cesium.Color.fromCssColorString("#060a10"),
+    outlineWidth: 3,
+    pixelOffset: new Cesium.Cartesian2(0, -16),
+    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+    // 穿透地形/云底图层始终可见；远距离自动隐藏避免标签堆叠
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 900000),
+    scaleByDistance: new Cesium.NearFarScalar(20000, 1.0, 600000, 0.6),
+  };
+
+  for (const [icao, ap] of Object.entries(AIRPORTS)) {
+    navDataSource.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(ap.lon, ap.lat, 0),
+      point: {
+        pixelSize: 7,
+        color: Cesium.Color.fromCssColorString("#38bdf8"),
+        outlineColor: Cesium.Color.fromCssColorString("#060a10"),
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: { ...labelCommon, text: `✈ ${icao} ${ap.name}`, fillColor: Cesium.Color.fromCssColorString("#7dd3fc") },
+    });
+  }
+  for (const nav of NAVAIDS) {
+    navDataSource.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(nav.lon, nav.lat, 0),
+      point: {
+        pixelSize: 5,
+        color: Cesium.Color.fromCssColorString("#f59e0b"),
+        outlineColor: Cesium.Color.fromCssColorString("#060a10"),
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        ...labelCommon,
+        text: `◈ ${nav.id} ${nav.freq}`,
+        fillColor: Cesium.Color.fromCssColorString("#fbbf24"),
+        // VOR 标签比机场更密，更近就隐
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 600000),
+      },
+    });
+  }
+  viewer.dataSources.add(navDataSource);
 }
 
 async function initEngine() {
@@ -480,6 +594,33 @@ function bindEvents() {
     toast(cloudsVisible ? "云体已显示" : "云体已隐藏");
   });
 
+  // 导航标记显隐
+  $("sv-toggle-nav")?.addEventListener("click", () => {
+    if (!navDataSource) return;
+    navDataSource.show = !navDataSource.show;
+    toast(navDataSource.show ? "导航标记已显示" : "导航标记已隐藏");
+  });
+
+  // 光照模式切换（白天/实况）
+  document.querySelectorAll("#sv-lighting .sv-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const mode = chip.dataset.lighting;
+      if (mode === lightingMode) return;
+      document.querySelectorAll("#sv-lighting .sv-chip").forEach(c =>
+        c.classList.toggle("active", c === chip));
+      setLightingMode(mode);
+      toast(mode === "day" ? "已锁定白天光照" : "已切换到实况太阳位置");
+    });
+  });
+
+  // 云体不透明度
+  $("sv-density")?.addEventListener("input", (e) => {
+    const pct = Number(e.target.value);
+    const label = $("sv-density-val");
+    if (label) label.textContent = `${pct}%`;
+    if (engineReady) engine.setCloudDensity(pct / 100);
+  });
+
   // 数据源切换（设置面板）
   document.querySelectorAll("#sv-source .sv-chip").forEach(chip => {
     chip.addEventListener("click", async () => {
@@ -563,6 +704,9 @@ async function main() {
       await initEngine();
       const fallback = $("sv-fallback");
       if (fallback) fallback.style.display = "none";
+      // 应用滑杆默认不透明度（默认 60%：高空俯视可透见地面）
+      const density = Number($("sv-density")?.value || 100);
+      if (density !== 100) engine.setCloudDensity(density / 100);
       setStatus("实时");
       toast("SkyVortex 就绪");
     } catch (err) {

@@ -156,8 +156,8 @@
     .sv-timeline-controls { display: flex; align-items: center; gap: var(--sv-gap-md); padding: var(--sv-gap-md) 0; }
     #sv-play { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--sv-border); background: var(--sv-accent-soft); color: var(--sv-accent); font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
     #sv-play:active { transform: scale(0.92); background: rgba(56,189,248,0.25); }
-    #sv-timeline { flex: 1; height: 6px; -webkit-appearance: none; appearance: none; background: rgba(255,255,255,0.08); border-radius: 3px; outline: none; cursor: pointer; }
-    #sv-timeline::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: var(--sv-accent); box-shadow: 0 0 10px var(--sv-accent-glow); border: 2px solid rgba(255,255,255,0.2); }
+    #sv-timeline, #sv-density { flex: 1; height: 6px; -webkit-appearance: none; appearance: none; background: rgba(255,255,255,0.08); border-radius: 3px; outline: none; cursor: pointer; }
+    #sv-timeline::-webkit-slider-thumb, #sv-density::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: var(--sv-accent); box-shadow: 0 0 10px var(--sv-accent-glow); border: 2px solid rgba(255,255,255,0.2); }
     #sv-time { font-family: var(--sv-font-mono); font-size: 13px; color: var(--sv-text-secondary); min-width: 40px; text-align: center; }
 
     /* 飞行视角按钮 */
@@ -250,6 +250,11 @@
     <div class="sv-fpv-grid">
       <button class="sv-fpv-btn" id="sv-toggle-clouds">☁️ 云体显隐</button>
       <button class="sv-fpv-btn" id="sv-refresh">🔄 刷新数据</button>
+      <button class="sv-fpv-btn" id="sv-toggle-nav">📍 导航标记</button>
+    </div>
+    <div style="font-size:11px;color:var(--sv-text-dim);margin-top:10px;line-height:1.5;">
+      🖱️ 左键拖拽平移 · 右键拖拽调俯仰 · 滚轮缩放<br/>
+      👆 触屏：单指拖动 · 双指倾斜/缩放
     </div>
   </div>
 
@@ -307,6 +312,22 @@
     <div style="font-size:11px;color:var(--sv-text-dim);margin:8px 0 16px;line-height:1.5;">
       模拟雷暴：内置对流单体生成器，离线可用<br/>
       葵花卫星：Himawari-9 B13 红外实况，10 分钟更新，云顶反演伪雷达（需网络）
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">☁️ 云体不透明度</div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <input type="range" id="sv-density" min="10" max="150" value="60" step="5" />
+      <span id="sv-density-val" style="font-family:var(--sv-font-mono);font-size:13px;color:var(--sv-text-secondary);min-width:44px;text-align:right;">60%</span>
+    </div>
+    <div style="font-size:11px;color:var(--sv-text-dim);margin:8px 0 16px;line-height:1.5;">
+      调低可透过云层看到地面 · 高空俯视建议 40–70%
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">☀️ 光照模式</div>
+    <div id="sv-lighting" style="display:flex;gap:8px;">
+      <button class="sv-chip active" data-lighting="day">白天（锁定正午）</button>
+      <button class="sv-chip" data-lighting="live">实况太阳</button>
+    </div>
+    <div style="font-size:11px;color:var(--sv-text-dim);margin:8px 0 16px;line-height:1.5;">
+      实况模式下傍晚/夜间云层无阳光照射会发暗，属正常物理现象
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">⚙️ 性能模式</div>
     <div id="sv-perf" style="display:flex;gap:8px;">
@@ -384,6 +405,6 @@
   </script>
 
   <!-- 主入口 -->
-  <script type="module" src="./main.js?v=20260730-4"></script>
+  <script type="module" src="./main.js?v=20260730-7"></script>
 </body>
 </html>
