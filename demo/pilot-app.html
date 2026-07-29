@@ -84,6 +84,7 @@
     .sv-logo { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--sv-accent), #0ea5e9); display: flex; align-items: center; justify-content: center; font-size: 14px; }
     .sv-brand-text { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
     .sv-brand-sub { font-size: 10px; color: var(--sv-text-muted); font-weight: 500; }
+    .sv-location { font-size: 11px; color: var(--sv-accent); font-family: var(--sv-font-mono); margin-top: 2px; font-weight: 500; }
 
     .sv-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sv-text-muted); }
     .sv-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sv-safe); box-shadow: 0 0 8px rgba(34,197,94,0.6); animation: pulse-dot 2s ease-in-out infinite; }
@@ -196,7 +197,18 @@
 </head>
 <body>
   <!-- Cesium 地球 -->
-  <div id="cesiumContainer"></div>
+  <div id="cesiumContainer">
+    <div id="sv-fallback" style="display:flex;position:absolute;inset:0;background:linear-gradient(180deg,#1e293b,#0f172a);color:#f1f5f9;font-family:Inter,sans-serif;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;z-index:1;">
+      <div style="font-size:64px;margin-bottom:20px;">⛅</div>
+      <div style="font-size:22px;font-weight:800;margin-bottom:8px;letter-spacing:-0.02em;">SkyVortex</div>
+      <div style="font-size:14px;color:#94a3b8;margin-bottom:4px;">飞行员立体天气云图</div>
+      <div style="font-size:12px;color:#64748b;margin-top:16px;">3D 引擎初始化中…</div>
+      <div style="font-size:11px;color:#475569;margin-top:8px;max-width:280px;line-height:1.5;">若长时间无反应，请使用 Chrome 或 Safari 打开本页面</div>
+      <div style="margin-top:24px;padding:10px 20px;border-radius:12px;background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.3);font-size:12px;color:#38bdf8;">
+        ✈️ 航线天气功能已就绪
+      </div>
+    </div>
+  </div>
 
   <!-- 顶部状态栏 -->
   <header id="sv-header">
@@ -206,6 +218,7 @@
         <div>
           <div class="sv-brand-text">SkyVortex</div>
           <div class="sv-brand-sub">飞行员立体天气</div>
+          <div class="sv-location" id="sv-location">--</div>
         </div>
       </div>
       <div id="sv-regions">
@@ -263,6 +276,27 @@
     <div id="sv-forecast"><div class="sv-empty">加载中…</div></div>
   </div>
 
+
+  <!-- 航线天气面板 -->
+  <div id="sv-route-panel" class="sv-panel hidden">
+    <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">✈️ 航线天气检查</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <div style="flex:1;">
+        <div style="font-size:11px;color:var(--sv-text-muted);margin-bottom:4px;">出发机场 (ICAO)</div>
+        <input id="sv-from" type="text" value="ZBAA" placeholder="如 ZBAA" 
+          style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--sv-border-subtle);background:rgba(255,255,255,0.03);color:var(--sv-text);font-size:14px;font-family:var(--sv-font-mono);outline:none;" />
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:11px;color:var(--sv-text-muted);margin-bottom:4px;">到达机场 (ICAO)</div>
+        <input id="sv-to" type="text" value="ZGGG" placeholder="如 ZGGG"
+          style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--sv-border-subtle);background:rgba(255,255,255,0.03);color:var(--sv-text);font-size:14px;font-family:var(--sv-font-mono);outline:none;" />
+      </div>
+    </div>
+    <button id="sv-check-route" style="width:100%;padding:12px;border-radius:12px;border:1px solid var(--sv-accent);background:var(--sv-accent-soft);color:var(--sv-accent);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sv-font-ui);transition:all 0.2s;">
+      查询航线天气
+    </button>
+    <div id="sv-route-result" style="margin-top:12px;"></div>
+  </div>
   <!-- 设置面板 -->
   <div id="sv-settings-panel" class="sv-panel hidden">
     <div style="font-size:12px;font-weight:600;color:var(--sv-text-secondary);margin-bottom:12px;">⚙️ 性能模式</div>
@@ -298,6 +332,11 @@
       <span class="sv-tab-icon">🌤️</span>
       <span>预报</span>
     </button>
+
+    <button class="sv-tab" data-tab="route">
+      <span class="sv-tab-icon">✈️</span>
+      <span>航线</span>
+    </button>
     <button class="sv-tab" data-tab="settings">
       <span class="sv-tab-icon">⚙️</span>
       <span>设置</span>
@@ -308,12 +347,34 @@
   <div id="sv-toast"></div>
 
   <!-- 加载 -->
-  <div id="loading">
+  <div id="loading" style="display:none;">
     <div class="sv-spinner"></div>
     <div>初始化三维气象引擎…</div>
   </div>
 
+  <!-- 独立 fallback：即使 main.js 失败也能隐藏 loading -->
+  <script>
+    (function() {
+      var timer = setTimeout(function() {
+        var loading = document.getElementById("loading");
+        if (loading && !loading.classList.contains("hidden")) {
+          loading.classList.add("hidden");
+          var container = document.getElementById("cesiumContainer");
+          if (container) {
+            container.style.background = "#1e293b";
+            container.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#94a3b8;font-family:Inter,sans-serif;padding:20px;text-align:center;"><div style="font-size:40px;margin-bottom:12px;">🗺️</div><div style="font-size:14px;font-weight:600;color:#f1f5f9;margin-bottom:6px;">加载超时</div><div style="font-size:12px;opacity:0.7;">请使用 Chrome/Safari 打开本页面</div></div>';
+          }
+          var header = document.getElementById("sv-header");
+          if (header) header.style.display = "flex";
+          var tabBar = document.getElementById("sv-tab-bar");
+          if (tabBar) tabBar.style.display = "flex";
+        }
+      }, 4000);
+      window.__mainLoaded = false;
+    })();
+  </script>
+
   <!-- 主入口 -->
-  <script type="module" src="./main.js"></script>
+  <script type="module" src="./main.js?v=20260729-3"></script>
 </body>
 </html>
