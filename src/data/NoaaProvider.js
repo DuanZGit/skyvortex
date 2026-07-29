@@ -104,20 +104,40 @@ export class NoaaProvider {
 
   /** 检查指定坐标是否在任一 SIGMET 区域内 */
   async checkPoint(lat, lon) {
+    return this.checkPoints([[lat, lon]]);
+  }
+
+  /**
+   * 批量检查多个坐标（单次 fetch + 本地判断），命中去重
+   * @param {Array<[number, number]>} points - [lat, lon] 列表
+   * @returns {Promise<Array>}
+   */
+  async checkPoints(points) {
     const sigmets = await this.fetchSigmets();
     const hits = [];
     for (const s of sigmets) {
-      if (this._pointInPolygon(lat, lon, s.geometry)) {
+      if (points.some(([lat, lon]) => this._pointInGeometry(lat, lon, s.geometry))) {
         hits.push(s);
       }
     }
     return hits;
   }
 
-  /** 点在多边形内判断（简化版，仅支持 Polygon） */
-  _pointInPolygon(lat, lon, geometry) {
-    if (!geometry || geometry.type !== "Polygon") return false;
-    const coords = geometry.coordinates[0]; // 外环
+  /** 点在几何体内判断（支持 Polygon / MultiPolygon，仅检外环） */
+  _pointInGeometry(lat, lon, geometry) {
+    if (!geometry) return false;
+    if (geometry.type === "Polygon") {
+      return this._pointInRing(lat, lon, geometry.coordinates[0]);
+    }
+    if (geometry.type === "MultiPolygon") {
+      return geometry.coordinates.some(poly => this._pointInRing(lat, lon, poly[0]));
+    }
+    return false;
+  }
+
+  /** 射线法点在环内判断 */
+  _pointInRing(lat, lon, coords) {
+    if (!coords || coords.length < 3) return false;
     let inside = false;
     for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
       const xi = coords[i][0], yi = coords[i][1];

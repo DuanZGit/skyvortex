@@ -12,6 +12,7 @@
  */
 
 const API_BASE = "https://api.open-meteo.com/v1";
+const ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1";
 
 // 云量 → 体积云覆盖度映射（0-1 → 0-255 dBZ 近似）
 function cloudCoverToDbz(coverPercent) {
@@ -103,7 +104,8 @@ export class OpenMeteoProvider {
     ];
     for (const v of hourlyVars2) params.append("hourly", v);
 
-    const url = `${API_BASE}/forecast?${params}`;
+    // 历史数据走 archive 端点（forecast 端点只覆盖近期）
+    const url = `${ARCHIVE_BASE}/archive?${params}`;
     const resp = await fetch(url, {
       headers: { "Accept": "application/json" },
     });

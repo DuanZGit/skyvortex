@@ -76,9 +76,17 @@ export class MockProvider {
         const spread = 1.0 + 0.3 * intensity;
         const rx = s.rx * spread, ry = s.ry * spread;
 
-        for (let y = 0; y < h; y++) {
+        // 包围盒裁剪：砧状云 exp(-r2*0.3) 扩散最宽，4× 半径处贡献 < 0.01 dBZ，可安全截断
+        const cullRx = rx * 4, cullRy = ry * 4;
+        const x0 = Math.max(0, Math.floor((cx - cullRx - bounds.west) / lonStep));
+        const x1 = Math.min(w - 1, Math.ceil((cx + cullRx - bounds.west) / lonStep));
+        const y0 = Math.max(0, Math.floor((cy - cullRy - bounds.south) / latStep));
+        const y1 = Math.min(h - 1, Math.ceil((cy + cullRy - bounds.south) / latStep));
+        if (x0 > x1 || y0 > y1) continue;
+
+        for (let y = y0; y <= y1; y++) {
           const lat = bounds.south + (y + 0.5) * latStep;
-          for (let x = 0; x < w; x++) {
+          for (let x = x0; x <= x1; x++) {
             const lon = bounds.west + (x + 0.5) * lonStep;
             const dx = (lon - cx) / rx;
             const dy = (lat - cy) / ry;

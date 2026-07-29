@@ -643,6 +643,21 @@ void main() {
         this._program = prog;
     }
 
+    /**
+     * 按性能档重建 shader（maxSteps/minStepSize/maxStepSize 烘焙在 FS 源码中，改参需重编译）
+     * @param {{maxSteps?: number, minStepSize?: number, maxStepSize?: number}} [quality]
+     */
+    setQuality({ maxSteps, minStepSize, maxStepSize } = {}) {
+        if (maxSteps !== undefined) this.params.maxSteps = maxSteps;
+        if (minStepSize !== undefined) this.params.minStepSize = minStepSize;
+        if (maxStepSize !== undefined) this.params.maxStepSize = maxStepSize;
+        const gl = this._gl;
+        if (!gl || !this._program) return; // 尚未初始化时，init 会用最新 params 编译
+        gl.deleteProgram(this._program);
+        this._program = null;
+        this.createProgram();
+    }
+
     render() {
         const scene = this.viewer.scene;
         const context = scene.context;

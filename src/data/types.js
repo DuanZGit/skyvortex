@@ -71,9 +71,9 @@
  * 沿航线的垂直剖面
  * @property {number} distanceKm       - 剖面总长 (km)
  * @property {number} sampleCount      - 采样点数
- * @property {Float32Array} distances  - 各采样点距起点距离 (km)
- * @property {Float32Array} heights    - 各采样点高度 (m)
- * @property {Float32Array} dbz        - 反射率 (dBZ)
+ * @property {Float32Array} distances  - 各采样点距起点距离 (km)，长度 sampleCount
+ * @property {Float32Array} heights    - 扫层高度 (m)，扁平数组 sampleCount×3（每采样点 1/3/6km 三层）
+ * @property {Float32Array} dbz        - 反射率 (dBZ)，扁平数组 sampleCount×3，与 heights 对齐
  */
 
 export {};

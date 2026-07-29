@@ -19,8 +19,7 @@
 
 /** @import { WeatherFrame, GeoBounds } from './types.js' */
 
-import { MockProvider } from "./MockProvider.js";
-import { NoaaProvider } from "./NoaaProvider.js";
+import { NoaaCachedProvider } from "./NoaaProvider.js";
 
 export class WeatherDataProvider {
   /** @type {Map<string, GeoBounds>} */
@@ -29,7 +28,7 @@ export class WeatherDataProvider {
   /** @type {import('./MockProvider.js').MockProvider | null} */
   #adapter = null;
 
-  /** @type {NoaaProvider} */
+  /** @type {NoaaCachedProvider} */
   #noaa;
 
   constructor() {
@@ -45,7 +44,7 @@ export class WeatherDataProvider {
       west: 112.5, south: 22.0, east: 114.5, north: 24.0,
       center: [113.3, 23.1],
     });
-    this.#noaa = new NoaaProvider();
+    this.#noaa = new NoaaCachedProvider();
   }
 
   /**
@@ -95,7 +94,7 @@ export class WeatherDataProvider {
     return this.#adapter.getTimeSeries(bounds, start, count, intervalMin);
   }
 
-  // ── NOAA 航空天气（接缝 5：独立数据通道）───────────────────────────
+  // ── NOAA 航空天气（独立数据通道，5min 缓存）───────────────────────
 
   /**
    * 获取全球 SIGMET 列表
@@ -123,28 +122,18 @@ export class WeatherDataProvider {
   async getSigmetsForRegion(region) {
     const bounds = this.#regions.get(region);
     if (!bounds) return [];
-    const center = bounds.center;
-    const hits = await this.#noaa.checkPoint(center[1], center[0]);
-    if (hits.length > 0) return hits;
-
-    // 如果中心点没命中，取区域四角
-    const corners = [
-      [bounds.west, bounds.south],
-      [bounds.east, bounds.north],
-      [bounds.west, bounds.north],
-      [bounds.east, bounds.south],
+    // 中心 + 四角共 5 个探针点，单次 fetch 本地判断
+    const probes = [
+      [bounds.center[1], bounds.center[0]],
+      [bounds.south, bounds.west],
+      [bounds.north, bounds.east],
+      [bounds.north, bounds.west],
+      [bounds.south, bounds.east],
     ];
-    const allHits = [];
-    for (const [lon, lat] of corners) {
-      const hs = await this.#noaa.checkPoint(lat, lon);
-      for (const h of hs) {
-        if (!allHits.find(x => x.id === h.id)) allHits.push(h);
-      }
-    }
-    return allHits;
+    return this.#noaa.checkPoints(probes);
   }
 
-  // ── Open-Meteo 数值预报（接缝 6：全球云量/降水/风）────────────────
+  // ── Open-Meteo 数值预报（全球云量/降水/风，30min 缓存）──────────────
 
   /** @type {OpenMeteoProvider | null} */
   #openMeteo = null;
@@ -179,5 +168,19 @@ export class WeatherDataProvider {
     const bounds = this.#regions.get(region);
     if (!bounds) throw new Error(`Unknown region: ${region}`);
     return this.#openMeteo.getDailySummary(bounds.center[1], bounds.center[0], days);
+  }
+
+  /**
+   * 获取任意坐标（如机场）的当前天气快照（航线 Tab 用）
+   * @param {number} lat
+   * @param {number} lon
+   * @returns {Promise<{time,cloud,precipitation,windSpeed,windDir}>}
+   */
+  async getAirportSnapshot(lat, lon) {
+    if (!this.#openMeteo) {
+      const { OpenMeteoProvider } = await import("./OpenMeteoProvider.js");
+      this.#openMeteo = new OpenMeteoProvider();
+    }
+    return this.#openMeteo.getSnapshot(lat, lon);
   }
 }

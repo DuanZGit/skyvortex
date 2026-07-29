@@ -122,9 +122,14 @@ export class StormTracker {
     const tracks = [];
     const active = new Map(); // id → StormTrack
 
-    for (const det of detections) {
-      const matched = new Set();
+    // 帧间隔从实际时间戳推导（fallback 5 分钟）
+    let intervalMin = 5;
+    if (frames.length >= 2) {
+      const dt = (new Date(frames[1].timestamp) - new Date(frames[0].timestamp)) / 60000;
+      if (Number.isFinite(dt) && dt > 0) intervalMin = dt;
+    }
 
+    for (const det of detections) {
       for (const storm of det.storms) {
         // 找最近的已有轨迹
         let bestId = null, bestDist = Infinity;
@@ -141,7 +146,6 @@ export class StormTracker {
           const track = active.get(bestId);
           track.history.push({ time: det.time, lon: storm.lon, lat: storm.lat });
           track.storm = storm;
-          matched.add(bestId);
         } else {
           // 新轨迹
           const id = storm.id;
@@ -162,16 +166,17 @@ export class StormTracker {
         const prev = hist[hist.length - 2];
         const dLon = last.lon - prev.lon;
         const dLat = last.lat - prev.lat;
-        // 假设帧间隔 5 min，外推 6 步 = 30 min
-        for (let i = 1; i <= 6; i++) {
+        // 按实际帧间隔外推约 30 min
+        const steps = Math.min(12, Math.max(1, Math.round(30 / intervalMin)));
+        for (let i = 1; i <= steps; i++) {
           track.forecast.push({
-            time: new Date(new Date(last.time).getTime() + i * 5 * 60000).toISOString(),
+            time: new Date(new Date(last.time).getTime() + i * intervalMin * 60000).toISOString(),
             lon: round3(last.lon + dLon * i),
             lat: round3(last.lat + dLat * i),
           });
         }
         // 估算移速
-        const dtH = 5 / 60; // 小时
+        const dtH = intervalMin / 60; // 小时
         const distKm = Math.hypot(dLon * 111 * Math.cos(last.lat * Math.PI / 180), dLat * 111);
         track.storm.driftSpeed = Math.round(distKm / dtH);
         track.storm.driftDir = Math.round((Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360);

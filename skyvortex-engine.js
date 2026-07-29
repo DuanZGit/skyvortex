@@ -28,20 +28,12 @@ import {
   LensFlareBloomStage,
   AtmosphereParameters,
 } from "./engine-base/src/index.js";
-import dat from "./engine-base/node_modules/dat.gui/build/dat.gui.module.js";
+import { DEFAULT_LAYERS as SYNTH_DEFAULT_LAYERS } from "./src/synthesis/CloudTextureSynthesizer.js";
 
 const Cesium = window.Cesium;
 
-/** 默认云层高度配置（米） */
-const DEFAULT_LAYERS = [
-  { channel: 'r', altitude: 1500, height: 1500, densityScale: 0.20,
-    coverage: 0.4, coverageFilterWidth: 0.6 },
-  { channel: 'g', altitude: 3500, height: 2500, densityScale: 0.35,
-    coverage: 0.5, coverageFilterWidth: 0.6 },
-  { channel: 'b', altitude: 8000, height: 2500, densityScale: 0.05,
-    coverage: 0.35, coverageFilterWidth: 0.5 },
-  { channel: 'a' }
-];
+/** 默认云层高度配置（米）—— 与合成层 DEFAULT_LAYERS 单一来源，避免双处维护漂移 */
+const DEFAULT_LAYERS = SYNTH_DEFAULT_LAYERS;
 
 export class SkyVortexEngine {
   /**
@@ -109,14 +101,73 @@ export class SkyVortexEngine {
   }
 
   /**
-   * 替换 4 通道 weather 纹理（接入新一帧雷达数据）
+   * 从合成层输出直接创建 Cesium 纹理（无 PNG/blob 编解码往返）
+   * @param {{rgba: Uint8ClampedArray, width: number, height: number}} tex
+   * @returns {Cesium.Texture}
+   */
+  createWeatherTexture(tex) {
+    const canvas = document.createElement("canvas");
+    canvas.width = tex.width;
+    canvas.height = tex.height;
+    const ctx = canvas.getContext("2d");
+    ctx.putImageData(new ImageData(tex.rgba, tex.width, tex.height), 0, 0);
+    return new Cesium.Texture({
+      context: this.viewer.scene.context,
+      source: canvas,
+      sampler: new Cesium.Sampler({
+        minificationFilter: Cesium.TextureMinificationFilter.LINEAR,
+        magnificationFilter: Cesium.TextureMagnificationFilter.LINEAR,
+        wrapS: Cesium.TextureWrap.REPEAT, wrapT: Cesium.TextureWrap.REPEAT,
+      }),
+    });
+  }
+
+  /**
+   * 安装 weather 纹理。textures 对象与云影 pass 共享引用，替换后自动生效。
+   * @param {Cesium.Texture} newTex
+   * @param {{destroyOld?: boolean}} [opts] - destroyOld=false 时旧纹理归调用方管理（外部帧缓存场景）
+   * @returns {Cesium.Texture|undefined} 被替下的旧纹理
+   */
+  setWeatherTexture(newTex, { destroyOld = true } = {}) {
+    if (!this.pipeline) throw new Error("Engine not initialized");
+    const old = this.pipeline.textures.weather;
+    this.pipeline.textures.weather = newTex;
+    if (this.pipeline._renderState) {
+      this.pipeline._renderState.weather = newTex;
+    }
+    if (old && old !== newTex && destroyOld) {
+      this._destroyTextureDeferred(old);
+    }
+    return old;
+  }
+
+  /** 延迟到下一帧渲染后销毁，避免销毁仍被当前帧引用的纹理 */
+  _destroyTextureDeferred(tex) {
+    const remove = this.viewer.scene.postRender.addEventListener(() => {
+      remove();
+      try { tex.destroy?.(); } catch (e) { /* ignore */ }
+    });
+  }
+
+  /**
+   * 推荐路径：直接用合成层输出替换 weather 纹理
+   * @param {{rgba: Uint8ClampedArray, width: number, height: number}} tex
+   */
+  swapWeatherTextureFromData(tex) {
+    const newTex = this.createWeatherTexture(tex);
+    this.setWeatherTexture(newTex, { destroyOld: true });
+    return newTex;
+  }
+
+  /**
+   * 替换 4 通道 weather 纹理（PNG URL 兼容路径）
    * @param {string} url - 新 PNG 的 URL
    */
   async swapWeatherTexture(url) {
     if (!this.pipeline) throw new Error("Engine not initialized");
     const resp = await fetch(url);
     const blob = await resp.blob();
-    
+
     // 使用 createImageBitmap + HTMLCanvasElement，绕过 headless 浏览器 blob URL 限制
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement('canvas');
@@ -126,28 +177,15 @@ export class SkyVortexEngine {
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
 
-    const gl = this.viewer.scene.context;
     const newTex = new Cesium.Texture({
-      context: gl, source: canvas,
+      context: this.viewer.scene.context, source: canvas,
       sampler: new Cesium.Sampler({
         minificationFilter: Cesium.TextureMinificationFilter.LINEAR,
         magnificationFilter: Cesium.TextureMagnificationFilter.LINEAR,
         wrapS: Cesium.TextureWrap.REPEAT, wrapT: Cesium.TextureWrap.REPEAT,
       }),
     });
-
-    const old = this.pipeline.textures.weather;
-    this.pipeline.textures.weather = newTex;
-    if (this.pipeline._renderState) {
-      this.pipeline._renderState.weather = newTex;
-    }
-    if (this.pipeline.shadowPass?.params) {
-      this.pipeline.shadowPass.params.weatherTexture = newTex;
-    }
-
-    if (old && old.destroy) {
-      try { old.destroy(); } catch (e) { /* ignore */ }
-    }
+    this.setWeatherTexture(newTex, { destroyOld: true });
     console.log(`[SkyVortex] weather texture swapped → ${url}`);
   }
 
@@ -188,6 +226,8 @@ export class SkyVortexEngine {
   }
 
   async _setupGui() {
+    // dat.gui 仅在 showGui 时按需加载，避免移动端白白多一份 bundle
+    const { default: dat } = await import("./engine-base/node_modules/dat.gui/build/dat.gui.module.js");
     this.gui = new dat.GUI({ width: 280 });
     this.gui.domElement.style.zIndex = "999";
 
@@ -227,18 +267,18 @@ export class SkyVortexEngine {
     p.secondaryStepScale = preset.secondaryStepScale;
     p.multiScatteringOctaves = preset.multiScatteringOctaves;
 
-    // 调整渲染分辨率（通过 Cesium scene）
-    if (preset.resolutionScale !== undefined && this.viewer.scene) {
-      // Cesium 1.132+ 支持 postProcessStages 分辨率缩放
-      const stages = this.viewer.scene.postProcessStages;
-      for (let i = 0; i < stages.length; i++) {
-        const stage = stages.get(i);
-        if (stage && stage.uniformState) {
-          // 不直接设置分辨率，而是通过调整相机视口来间接控制
-          // 具体实现取决于 Cesium 版本
-        }
-      }
+    // 渲染分辨率缩放（raymarch 像素数随之下降，移动端收益最大）
+    if (preset.resolutionScale !== undefined && this.viewer) {
+      this.viewer.resolutionScale = preset.resolutionScale;
     }
+
+    // BSM 云影 pass 的步进参数烘焙在 shader 源码里，需重建 program
+    const shadowPass = this.pipeline._bsm?.pass;
+    shadowPass?.setQuality?.({
+      maxSteps: preset.maxSteps,
+      minStepSize: preset.minStepSize,
+      maxStepSize: preset.maxStepSize,
+    });
 
     console.log(`[SkyVortex] performance preset applied:`, preset.label || preset);
     return this;
