@@ -1,8 +1,30 @@
-# SkyVortex P0 状态报告
+# SkyVortex 状态报告
 
-> 2026-07-28 · 基于 GitHub 现成轮子 `cesium-clouds-atmosphere` 改造
+> 2026-07-29 · 完整体开发（修复 + 性能 + 功能接通 + 工程化）
 
-## ✅ 已完成
+## ✅ 2026-07-29 完整体（设计文档：docs/superpowers/）
+
+### 修复
+- StormTracker 跨帧追踪：轨迹改用独立 trk-N 编号（storm.id 每帧重编号导致 Map key 冲突）
+- NoaaProvider/OpenMeteoProvider/MockProvider 接口对齐 types.js 契约
+- three / dat.gui 补声明为正式依赖（此前从未安装，build 必败）
+- vite 中间件回源 /engine-base/** 静态资产（大气 LUT .bin 404 修复）+ build 时复制到 dist
+
+### 功能接通（demo/main.js 重写为干净接线层）
+- 时间轴：TimelineController 驱动多帧播放/暂停/拖拽，纹理热替换
+- 风暴追踪：StormTracker 真算法驱动单体卡片（dBZ/云顶/移速/威胁分级）+ SIGMET 告警
+- 航线剖面：FlightPathProfiler 真算法 + Open-Meteo 真实 API 端点天气快照
+- 引擎：Canvas 纹理直传（免 PNG 编解码）、resolutionScale/setQuality 性能档位、showGui 开关透传链（默认关闭 dat.gui 面板）
+
+### 工程化
+- Vitest 单测 19/19 绿（tests/：mockProvider / cloudTextureSynthesizer / stormTracker / flightPathProfiler）
+- npm scripts：dev / test / build / preview；生产构建主包 313KB（gzip 89KB）
+
+### 验证证据
+- 真实浏览器交互验证：区域切换/时间轴/风暴卡片/航线剖面/SIGMET/预报全部通过，零 console 错误
+- 3D 体积云渲染截图：docs/superpowers/verify-app.png（北京上空 10km 积云场）
+
+## ✅ P0 已完成（2026-07-28）
 
 ### 1. 引擎底座（engine-base/）
 - 来源：`yuwoniu03/cesium-clouds-atmosphere`（MIT，2026-07-27 最后更新）
@@ -36,19 +58,13 @@
 - ✅ 太阳方向计算正常
 - ⚠️ 体积云渲染效果无法在 headless 浏览器验证（GPU shader 限制），需真机测试
 
-## 🚀 真机运行
+## 🚀 运行
 
 ```bash
-cd /var/minis/workspace/skyvortex
-
-# 1. 生成雷达纹理（已生成，可跳过）
-python3 data/pipeline/cappi_to_weather.py --region beijing
-
-# 2. 启动 dev server
-npm run dev
-# → http://localhost:5174/pilot-app.html
-
-# 3. 在真实浏览器（Chrome/Safari）打开即可看到体积云渲染
+npm install          # three/dat.gui 已在根依赖
+npm run dev          # → http://localhost:5174/pilot-app.html
+npm test             # Vitest 19 用例
+npm run build        # → dist/（含 engine-base 资产复制）
 ```
 
 ## 📁 关键文件
@@ -62,10 +78,8 @@ npm run dev
 | `public/weather/*.png` | 生成的天气纹理 |
 | `engine-base/` | 体积云渲染引擎（MIT） |
 
-## 🔜 下一步（P0.5）
+## 🔜 下一步
 
-1. **真机验证**：在 Chrome/Safari 打开确认体积云渲染效果
-2. **接入真实 CAPPI**：替换 mock 为中国气象局雷达拼图（需解决数据获取）
-3. **时间轴**：多时刻 CAPPI 序列播放（5min 间隔）
-4. **风云四号 IR**：云顶温度反演 → A 通道
-5. **Capacitor 打包**：iOS/Android 原生壳
+1. **T2 真实 CAPPI**：接入中国气象局雷达拼图（需解决数据获取授权）
+2. **风云四号 IR**：云顶温度反演 → A 通道
+3. **Capacitor 打包**：iOS/Android 原生壳

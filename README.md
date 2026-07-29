@@ -62,11 +62,10 @@ skyvortex/
 ## 快速开始
 
 ```bash
-# 安装依赖
+# 安装依赖（three / dat.gui 已声明在根 package.json，无需单独安装 engine-base）
 npm install
-cd engine-base && npm install && cd ..
 
-# 生成 mock 雷达数据（北京/上海/广州）
+# 生成 mock 雷达数据（北京/上海/广州，仓库已附生成结果可跳过）
 python3 data/pipeline/cappi_to_weather.py --region beijing
 python3 data/pipeline/cappi_to_weather.py --region shanghai
 python3 data/pipeline/cappi_to_weather.py --region guangzhou
@@ -74,6 +73,13 @@ python3 data/pipeline/cappi_to_weather.py --region guangzhou
 # 启动 dev server
 npm run dev
 # → http://localhost:5174/pilot-app.html
+
+# 单元测试（Vitest）
+npm test
+
+# 生产构建 / 预览
+npm run build
+npm run preview
 ```
 
 > ⚠️ 体积云 raymarching 需要真实 GPU，headless 浏览器 / 虚拟机中可能渲染为黑屏。请在 Chrome / Safari 中打开。
@@ -118,7 +124,8 @@ tl.play();
 
 | 阶段 | 数据源 | 状态 |
 |------|--------|------|
-| P0 | Mock 生成器（离线） | ✅ 已完成 |
+| P0 | Mock 生成器（离线，seed 可复现） | ✅ 已完成 |
+| P1 | Open-Meteo（免费无 key，航线端点天气快照） | ✅ 已接入 |
 | P1 | CMA 雷达拼图（nmc.cn，公开） | 🔜 待接入 |
 | P2 | 商业 API（和风 / 象辑） | 📋 规划中 |
 | P3 | 风云四号 IR 云顶反演 | 📋 规划中 |
@@ -127,10 +134,11 @@ tl.play();
 
 - [x] P0：引擎集成 + mock 数据管线 + 飞行员 Demo
 - [x] 架构脚手架：6 模块 + 4 接缝 + 端到端测试
-- [ ] T1：时间轴动画（多帧播放 / 暂停 / 拖拽）
-- [ ] T2：真实 CAPPI 数据接入
-- [ ] T3：雷暴单体识别（连通域 + 质心 + 移速）
-- [ ] T4：飞行路径垂直剖面
+- [x] T1：时间轴动画（多帧播放 / 暂停 / 拖拽，TimelineController 接入 UI）
+- [x] T3：雷暴单体识别（连通域 + 质心 + 移速 + 30min 外推）
+- [x] T4：飞行路径垂直剖面（FlightPathProfiler + Open-Meteo 端点天气）
+- [x] 工程化：Vitest 单测（19 用例）+ build/preview 脚本
+- [ ] T2：真实 CAPPI 雷达拼图接入（需数据源授权）
 - [ ] T5：风云四号 IR 云顶反演
 - [ ] Capacitor 移动端打包
 
