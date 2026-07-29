@@ -100,9 +100,14 @@ function levelText(level) {
 function initViewer() {
   Cesium.Ion.defaultAccessToken = "";
   viewer = new Cesium.Viewer("cesiumContainer", {
+    // Esri 世界卫星影像（免费无 key，真实地表）；失败时降级内置 NaturalEarthII 离线底图
     baseLayer: Cesium.ImageryLayer.fromProviderAsync(
-      Cesium.TileMapServiceImageryProvider.fromUrl(
-        Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
+      Cesium.ArcGisMapServerImageryProvider.fromUrl(
+        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
+      ).catch(() =>
+        Cesium.TileMapServiceImageryProvider.fromUrl(
+          Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
+        )
       )
     ),
     baseLayerPicker: false, geocoder: false, homeButton: false,
