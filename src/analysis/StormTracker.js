@@ -120,7 +120,8 @@ export class StormTracker {
     // 简化版：对每帧做 detect，然后用最近邻匹配跨帧关联
     const detections = frames.map(f => ({ time: f.timestamp, storms: this.detect(f) }));
     const tracks = [];
-    const active = new Map(); // id → StormTrack
+    const active = new Map(); // 轨迹唯一 id → StormTrack
+    let trackSeq = 0; // storm.id 每帧从 CB-01 重新编号，不能直接作 Map key
 
     // 帧间隔从实际时间戳推导（fallback 5 分钟）
     let intervalMin = 5;
@@ -148,7 +149,7 @@ export class StormTracker {
           track.storm = storm;
         } else {
           // 新轨迹
-          const id = storm.id;
+          const id = `trk-${trackSeq++}`;
           active.set(id, {
             storm,
             history: [{ time: det.time, lon: storm.lon, lat: storm.lat }],

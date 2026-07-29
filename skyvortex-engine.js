@@ -42,7 +42,7 @@ export class SkyVortexEngine {
    * @param {string} [opts.weatherTextureUrl] - 4 通道 PNG URL
    * @param {object[]} [opts.layers] - 自定义云层高度配置
    * @param {AtmosphereParameters} [opts.atmosphereParams]
-   * @param {boolean} [opts.showGui] - 是否显示 dat.gui 调参面板
+      * @param {boolean} [opts.showGui] - 是否显示 dat.gui 调参面板
    * @param {number} [opts.weatherRepeat] - 纹理重复倍数
    */
   constructor(viewer, opts = {}) {
@@ -71,6 +71,7 @@ export class SkyVortexEngine {
     this.pipeline = await createCloudAtmosphere(this.viewer, {
       assets: { mode: "local" },
       atmosphereParams: atmos,
+      showGui: !!this.opts.showGui, // pipeline 内置调参面板与引擎 GUI 同开关
       ...assetOverrides,
     });
 
@@ -226,8 +227,14 @@ export class SkyVortexEngine {
   }
 
   async _setupGui() {
-    // dat.gui 仅在 showGui 时按需加载，避免移动端白白多一份 bundle
-    const { default: dat } = await import("./engine-base/node_modules/dat.gui/build/dat.gui.module.js");
+    // dat.gui 仅在 showGui 时按需加载，避免非调试场景多一份 bundle；加载失败仅降级无 GUI
+    let dat;
+    try {
+      dat = await import("dat.gui");
+    } catch (e) {
+      console.warn("[SkyVortex] dat.gui 加载失败，跳过调参面板", e);
+      return;
+    }
     this.gui = new dat.GUI({ width: 280 });
     this.gui.domElement.style.zIndex = "999";
 

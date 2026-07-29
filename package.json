@@ -1,17 +1,26 @@
 {
   "name": "skyvortex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SkyVortex - 飞行员立体天气云图引擎",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "vite",
-    "data:beijing": "python3 data/pipeline/cappi_to_weather.py --region beijing",
-    "data:shanghai": "python3 data/pipeline/cappi_to_weather.py --region shanghai",
-    "data:guangzhou": "python3 data/pipeline/cappi_to_weather.py --region guangzhou",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "data:beijing": "python data/pipeline/cappi_to_weather.py --region beijing",
+    "data:shanghai": "python data/pipeline/cappi_to_weather.py --region shanghai",
+    "data:guangzhou": "python data/pipeline/cappi_to_weather.py --region guangzhou",
     "data:all": "npm run data:beijing && npm run data:shanghai && npm run data:guangzhou"
   },
+  "dependencies": {
+    "dat.gui": "^0.7.9",
+    "three": "^0.170.0"
+  },
   "devDependencies": {
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
   }
 }

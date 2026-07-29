@@ -539,6 +539,8 @@ export class AtmospherePostProcess {
     // 默认指向库内 Shaders/（相对宿主页面 base），避免 404 被 SPA fallback 成 index.html 导致 shader 出现 '<' 编译错误
     this.shaderBaseUrl = options.shaderBaseUrl ?? './src/AtmosphereFromThreeGeospatial/Shaders/';
     this.atmosphereParams = options.atmosphereParams ?? new AtmosphereParameters();
+    // 调参面板默认开启，宿主应用可传 showGui:false 关闭
+    this._showGui = options.showGui !== false;
     this.stage = null;
     this.textures = null;
     this._ready = null;
@@ -814,7 +816,7 @@ export class AtmospherePostProcess {
         scene.postProcessStages.add(this.stage);
       }
 
-      this._setupGUI();
+      if (this._showGui) this._setupGUI();
     })();
 
     return this._ready;

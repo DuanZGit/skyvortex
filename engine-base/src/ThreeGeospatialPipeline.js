@@ -785,6 +785,8 @@ export class ThreeGeospatialPipeline {
     this.atmosphereParams = options.atmosphereParams ?? new AtmosphereParameters();
     this._frameCount = 0;
     this._gui = null;
+    // 调参面板默认开启（保持 engine-base demo 行为），宿主应用可传 showGui:false 关闭
+    this._showGui = options.showGui !== false;
 
     // 可配置的资源/shader 根路径（均带默认值，便于在任意部署路径下使用）
     this.assetsBase = options.cloudsAssetsBase ?? DEFAULT_CLOUDS_ASSETS_BASE;
@@ -1424,7 +1426,7 @@ uniform sampler2D irradiance_texture;
       // 1. Atmosphere
       this.atmosphere = new AtmospherePostProcess(viewer, {
         atmosphereParams: this.atmosphereParams, renderSky: true,
-        applyGroundAtmosphere: false, autoAddStage: false,
+        applyGroundAtmosphere: false, autoAddStage: false, showGui: this._showGui,
         assetsBaseUrl: this.atmosphereAssetsBase, shaderBaseUrl: this.atmosphereShaderBase,
       });
       await this.atmosphere.init();
@@ -1503,7 +1505,7 @@ uniform sampler2D irradiance_texture;
         );
       }));
 
-      this._setupGUI();
+      if (this._showGui) this._setupGUI();
       console.log("[Pipeline] ready: Cloud -> Atmosphere -> Aerial");
     })();
     return this._ready;
