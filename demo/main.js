@@ -1,519 +1,551 @@
 /**
- * SkyVortex · 飞行员 Demo 主入口
+ * SkyVortex · 飞行员 Demo 主入口（干净接线层）
  *
- * 架构：WeatherDataProvider → CloudTextureSynthesizer → SkyVortexEngine → StormTracker / TimelineController
+ * 架构：WeatherDataProvider → CloudTextureSynthesizer → SkyVortexEngine
+ *       分析：StormTracker / FlightPathProfiler   UI：TimelineController
  *
- * UI：移动端优先，底部 Tab Bar 导航
+ * 原则：定义 → 工具 → 初始化 → 数据管线 → 面板渲染 → 事件绑定 → 单一启动入口
  */
 
-import { SkyVortexEngine } from "../skyvortex-engine.js";
+import { SkyVortexEngine, detectDevicePerformance } from "../skyvortex-engine.js";
 import {
   WeatherDataProvider, MockProvider,
-  CloudTextureSynthesizer, StormTracker, TimelineController,
+  CloudTextureSynthesizer, StormTracker, FlightPathProfiler, TimelineController,
 } from "../src/index.js";
 
+const Cesium = window.Cesium;
 
-// ── 立即显示 UI，后台异步初始化引擎 ──
-// 最外层 try-catch：任何错误都不卡页面
+// ── 配置 ──────────────────────────────────────────────────────────
 
-try {
-  // ── 立即显示 UI，后台异步初始化引擎 ──
+const REGIONS = {
+  beijing:   { name: "北京", center: [116.5, 39.8], alt: 10000 },
+  shanghai:  { name: "上海", center: [121.5, 31.2], alt: 10000 },
+  guangzhou: { name: "广州", center: [113.3, 23.1], alt: 10000 },
+};
 
-function hideLoading() {
-  var el = document.getElementById("loading");
-  if (el) el.classList.add("hidden");
-}
+/** ICAO → 机场坐标（航线 Tab 用） */
+const AIRPORTS = {
+  ZBAA: { name: "北京首都", lon: 116.584, lat: 40.080 },
+  ZBAD: { name: "北京大兴", lon: 116.410, lat: 39.509 },
+  ZSSS: { name: "上海虹桥", lon: 121.336, lat: 31.198 },
+  ZSPD: { name: "上海浦东", lon: 121.805, lat: 31.143 },
+  ZGGG: { name: "广州白云", lon: 113.299, lat: 23.392 },
+  ZGSZ: { name: "深圳宝安", lon: 113.811, lat: 22.639 },
+  ZUUU: { name: "成都双流", lon: 103.947, lat: 30.578 },
+  ZUCK: { name: "重庆江北", lon: 106.642, lat: 29.719 },
+  ZLXY: { name: "西安咸阳", lon: 108.752, lat: 34.447 },
+  ZHHH: { name: "武汉天河", lon: 114.208, lat: 30.784 },
+};
 
-function updateLocationDisplay() {
-  var el = document.getElementById("sv-location");
+const FRAME_COUNT = 12;      // 时间轴帧数（与 #sv-timeline max=11 对应）
+const FRAME_INTERVAL_MIN = 5;
+
+// ── 模块实例与状态 ─────────────────────────────────────────────────
+
+const provider = new WeatherDataProvider();
+provider.setAdapter(new MockProvider(42));
+const synth = new CloudTextureSynthesizer();
+const stormTracker = new StormTracker();
+const profiler = new FlightPathProfiler();
+const timeline = new TimelineController();
+
+let viewer = null;
+let engine = null;
+let engineReady = false;
+
+let currentRegion = "beijing";
+let currentPerformance = "high";
+let cloudsVisible = true;
+
+/** @type {import('../src/data/types.js').WeatherFrame[]} */
+let weatherFrames = [];
+/** 预合成的 Cesium.Texture 帧缓存（与 weatherFrames 对齐） */
+let frameTextures = [];
+/** 区域加载版本号：并发加载守卫 */
+let loadVersion = 0;
+
+// ── 工具 ──────────────────────────────────────────────────────────
+
+const $ = (id) => document.getElementById(id);
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $("sv-toast");
   if (!el) return;
-  var r = REGIONS[currentRegion];
-  if (!r) return;
-  el.textContent = r.name + " · " + r.center[1].toFixed(1) + "°N " + r.center[0].toFixed(1) + "°E";
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
 }
 
-function bindEvents() {
-  // 区域切换
-  document.querySelectorAll("#sv-regions .sv-chip").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      document.querySelectorAll("#sv-regions .sv-chip").forEach(function(b) { b.classList.remove("active"); });
-      btn.classList.add("active");
-      loadRegion(btn.dataset.region);
-    });
-  });
+function setStatus(text, type = "ok") {
+  const el = $("sv-status");
+  const dot = $("sv-status-dot");
+  if (el) el.textContent = text;
+  if (dot) dot.classList.toggle("error", type === "error");
+}
 
-  // Tab 导航
-  document.querySelectorAll("#sv-tab-bar .sv-tab").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      showPanel(btn.dataset.tab);
-    });
-  });
+function fmtTime(iso) {
+  if (!iso) return "--:--";
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
 
-  // 飞行视角
-  document.querySelectorAll(".sv-fpv-btn[data-fpv]").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      toast("飞行视角：" + btn.textContent.trim());
-    });
-  });
+function levelText(level) {
+  return level === "danger" ? "危险" : level === "warn" ? "注意" : "安全";
+}
 
-  // 云体显隐
-  var toggleBtn = document.getElementById("sv-toggle-clouds");
-  if (toggleBtn) {
-    toggleBtn.addEventListener("click", function() {
-      cloudsVisible = !cloudsVisible;
-      toast(cloudsVisible ? "云体已显示" : "云体已隐藏");
-    });
+// ── Cesium Viewer + 引擎初始化 ─────────────────────────────────────
+
+function initViewer() {
+  Cesium.Ion.defaultAccessToken = "";
+  viewer = new Cesium.Viewer("cesiumContainer", {
+    baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+      Cesium.TileMapServiceImageryProvider.fromUrl(
+        Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII")
+      )
+    ),
+    baseLayerPicker: false, geocoder: false, homeButton: false,
+    sceneModePicker: false, navigationHelpButton: false,
+    animation: false, timeline: false, fullscreenButton: false,
+    infoBox: false, selectionIndicator: false,
+    skyBox: false, skyAtmosphere: false,
+    requestRenderMode: false,
+    // preserveDrawingBuffer：支持截图导出（飞行前天气简报留存）
+    contextOptions: { webgl: { alpha: true, preserveDrawingBuffer: true } },
+  });
+  flyToRegion(currentRegion, false);
+}
+
+async function initEngine() {
+  engine = new SkyVortexEngine(viewer, {
+    cloudsAssetsBase: "/engine-base/public/clouds-assets/",
+    atmosphereAssetsBase: "/engine-base/src/AtmosphereFromThreeGeospatial/assets/",
+    atmosphereShaderBase: "/engine-base/src/AtmosphereFromThreeGeospatial/Shaders/",
+    brunetonShaderBase: "/engine-base/src/AtmosphereFromThreeGeospatial/Shaders/bruneton/",
+    blueNoiseUrl: "/engine-base/public/data/noisePic/noisergba256.png",
+    showGui: false,
+    performance: currentPerformance,
+  });
+  await engine.init();
+  engineReady = true;
+  window.__engine = engine;
+}
+
+function flyToRegion(region, animate = true) {
+  if (!viewer) return;
+  const r = REGIONS[region];
+  const dest = Cesium.Cartesian3.fromDegrees(r.center[0], r.center[1], r.alt);
+  const orientation = { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO * 0.45, roll: 0 };
+  if (animate) viewer.camera.flyTo({ destination: dest, orientation, duration: 1.2 });
+  else viewer.camera.setView({ destination: dest, orientation });
+}
+
+function setFlightView(mode) {
+  if (!viewer) return;
+  const [lon, lat] = REGIONS[currentRegion].center;
+  const views = {
+    pilot: { alt: 12000, pitch: -Math.PI / 3, heading: 0 },
+    tower: { alt: 800,   pitch: Cesium.Math.toRadians(12), heading: 0 },
+    side:  { alt: 6000,  pitch: 0, heading: Math.PI / 2, offsetLon: -0.9 },
+    top:   { alt: 45000, pitch: -Cesium.Math.PI_OVER_TWO, heading: 0 },
+  };
+  const v = views[mode];
+  if (!v) return;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(lon + (v.offsetLon || 0), lat, v.alt),
+    orientation: { heading: v.heading, pitch: v.pitch, roll: 0 },
+    duration: 1.2,
+  });
+}
+
+// ── 数据管线：区域帧序列 → 合成 → 纹理缓存 → 时间轴 ─────────────────
+
+async function loadRegion(region) {
+  const version = ++loadVersion;
+  setStatus("加载中…");
+  $("sv-location").textContent = `${REGIONS[region].name} · CAPPI`;
+
+  const frames = await provider.getTimeSeries(
+    region, new Date().toISOString(), FRAME_COUNT, FRAME_INTERVAL_MIN
+  );
+  if (version !== loadVersion) return; // 已被更新的加载取代
+
+  // 预合成 12 帧 Cesium 纹理（播放时零合成开销）
+  const textures = frames.map(f => engineReady ? engine.createWeatherTexture(synth.synthesize(f)) : null);
+
+  const oldTextures = frameTextures;
+  weatherFrames = frames;
+  frameTextures = textures;
+  timeline.load(frames.map(f => ({ timestamp: f.timestamp, data: f })));
+
+  // 旧缓存延迟销毁（当前已安装的旧纹理在 load→onFrame 安装新帧后才销毁，安全）
+  if (engineReady) {
+    for (const t of oldTextures) if (t) engine._destroyTextureDeferred(t);
   }
 
-  // 刷新
-  var refreshBtn = document.getElementById("sv-refresh");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", function() {
-      loadRegion(currentRegion);
-      toast("刷新数据…");
-    });
-  }
+  renderStorms();
+  setStatus("实时");
+}
 
-  // 时间轴
-  var slider = document.getElementById("sv-timeline");
-  if (slider) {
-    slider.addEventListener("input", function() {
-      seekToFrame(parseInt(slider.value));
-    });
-  }
-  var playBtn = document.getElementById("sv-play");
-  if (playBtn) {
-    playBtn.addEventListener("click", togglePlay);
-  }
-
-  // 性能模式
-  document.querySelectorAll("#sv-perf .sv-chip").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      document.querySelectorAll("#sv-perf .sv-chip").forEach(function(b) { b.classList.remove("active"); });
-      btn.classList.add("active");
-      currentPerformance = btn.dataset.perf;
-      toast("性能：" + btn.textContent.trim());
-    });
-  });
-
-  // 航线天气查询
-  var checkRouteBtn = document.getElementById("sv-check-route");
-  if (checkRouteBtn) {
-    checkRouteBtn.addEventListener("click", checkRouteWeather);
+function onTimelineFrame(index, frame) {
+  const slider = $("sv-timeline");
+  if (slider) slider.value = String(index);
+  $("sv-time").textContent = frame ? fmtTime(frame.timestamp) : "--:--";
+  if (engineReady && frameTextures[index]) {
+    engine.setWeatherTexture(frameTextures[index], { destroyOld: false });
   }
 }
 
-function showUI() {
-  // 立即显示 UI，不等待引擎
-  hideLoading();
-  updateLocationDisplay();
-  bindEvents();
-  console.log("%c SkyVortex UI ready ", "background:#38bdf8;color:#000;padding:4px 8px;border-radius:4px;font-weight:600");
-}
+// ── 面板渲染 ──────────────────────────────────────────────────────
 
-// 后台异步初始化（不阻塞 UI）
-async function initEngineInBackground() {
-  try {
-    // 先初始化 Cesium
-    await initCesiumWithTimeout();
-    setStatus("实时");
-    
-    // 再初始化引擎
-    engine = new SkyVortexEngine(viewer, {
-      cloudsAssetsBase: "/engine-base/public/clouds-assets/",
-      atmosphereAssetsBase: "/engine-base/src/AtmosphereFromThreeGeospatial/assets/",
-      atmosphereShaderBase: "/engine-base/src/AtmosphereFromThreeGeospatial/Shaders/",
-      brunetonShaderBase: "/engine-base/src/AtmosphereFromGeospatial/Shaders/bruneton/",
-      blueNoiseUrl: "/engine-base/public/data/noisePic/noisergba256.png",
-      showGui: false,
-    });
-    window.__engine = engine;
-    if (viewer) window.__viewer = viewer;
-    
-    await engine.init();
-    toast("SkyVortex 就绪");
-    // 引擎初始化完成后加载区域数据
-    loadRegion("beijing");
-  } catch (err) {
-    console.error("Engine init failed:", err);
-    setStatus("降级模式", "warn");
-    if (!viewer) createFallbackMap();
-    toast("使用降级地图模式");
+function renderStorms() {
+  const container = $("sv-storms");
+  if (!container) return;
+  if (!weatherFrames.length) {
+    container.innerHTML = `<div class="sv-empty">暂无数据</div>`;
+    return;
   }
+  // 全序列追踪：拿到移速/移向
+  const tracks = stormTracker.track(weatherFrames);
+  if (!tracks.length) {
+    container.innerHTML = `<div class="sv-empty">当前区域无活跃雷暴单体</div>`;
+    return;
+  }
+  container.innerHTML = tracks.map(t => {
+    const s = t.storm;
+    const drift = s.driftSpeed != null ? ` · ${s.driftSpeed} km/h @${s.driftDir}°` : "";
+    return `
+      <div class="sv-card" data-storm-lon="${s.lon}" data-storm-lat="${s.lat}">
+        <div class="sv-card-header">
+          <div class="sv-card-title">${s.id}</div>
+          <span class="sv-badge ${s.level}">${levelText(s.level)}</span>
+        </div>
+        <div class="sv-card-meta">${s.dbz} dBZ · 顶高 ${(s.topHeight / 1000).toFixed(1)} km${drift}</div>
+      </div>`;
+  }).join("");
+
+  // 点击单体 → 飞过去
+  container.querySelectorAll(".sv-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const lon = Number(card.dataset.stormLon);
+      const lat = Number(card.dataset.stormLat);
+      if (viewer && Number.isFinite(lon)) {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat - 0.35, 15000),
+          orientation: { heading: 0, pitch: -Math.PI / 4, roll: 0 },
+          duration: 1.2,
+        });
+      }
+    });
+  });
 }
-
-// 立即显示 UI，不等待引擎
-setTimeout(function() {
-  showUI();
-  // 后台继续初始化
-  initEngineInBackground();
-}, 100);
-
-// ── SIGMET 航空警告 ──────────────────────────────────────────────────// ── SIGMET 航空警告 ──────────────────────────────────────────────────
 
 async function loadSigmets() {
-  const container = document.getElementById("sv-sigmets");
+  const container = $("sv-sigmets");
   if (!container) return;
   try {
     const sigmets = await provider.getSigmetsForRegion(currentRegion);
     if (!sigmets.length) {
-      container.innerHTML = "<div style=\"font-size:12px;color:var(--sv-text-dim);padding:8px;text-align:center;\">当前区域无 SIGMET 警告</div>";
+      container.innerHTML = `<div class="sv-empty">当前区域无 SIGMET 警告</div>`;
       return;
     }
-    container.innerHTML = sigmets.slice(0, 5).map(function(s) {
-      return '<div class="sv-card"><div class="sv-card-header"><div class="sv-card-title">' + s.label + '</div><span class="sv-badge ' + s.level + '">' + (s.level === 'danger' ? '危险' : s.level === 'warn' ? '注意' : '安全') + '</span></div><div class="sv-card-meta">' + s.fir + ' · ' + (s.startTime ? s.startTime.slice(11,16) : '--') + '-' + (s.endTime ? s.endTime.slice(11,16) : '--') + ' UTC</div></div>';
-    }).join("");
+    container.innerHTML = sigmets.slice(0, 5).map(s => `
+      <div class="sv-card">
+        <div class="sv-card-header">
+          <div class="sv-card-title">${s.label}</div>
+          <span class="sv-badge ${s.level}">${levelText(s.level)}</span>
+        </div>
+        <div class="sv-card-meta">${s.fir} · ${s.startTime?.slice(11, 16) || "--"}-${s.endTime?.slice(11, 16) || "--"} UTC</div>
+      </div>`).join("");
   } catch (err) {
     console.error("SIGMET load failed:", err);
-    container.innerHTML = "<div style=\"font-size:12px;color:var(--sv-text-dim);padding:8px;text-align:center;\">加载失败</div>";
+    container.innerHTML = `<div class="sv-empty">SIGMET 加载失败（网络受限）</div>`;
   }
 }
-
-// ── Open-Meteo 云量预报 ───────────────────────────────────────────────
 
 async function loadForecast() {
-  const container = document.getElementById("sv-forecast");
-  if (!container) return;
+  const el = $("sv-forecast");
+  if (!el) return;
   try {
-    const summary = await provider.getFlightWeatherSummary(currentRegion, 3);
-    if (!summary.length) {
-      container.innerHTML = "<div style=\"font-size:12px;color:var(--sv-text-dim);padding:8px;text-align:center;\">暂无预报数据</div>";
+    const days = await provider.getFlightWeatherSummary(currentRegion, 3);
+    if (!days.length) {
+      el.innerHTML = `<div class="sv-empty">暂无预报数据</div>`;
       return;
     }
-    container.innerHTML = summary.map(function(d) {
-      return '<div class="sv-card"><div class="sv-card-header"><div class="sv-card-title">' + d.date + '</div><span class="sv-badge ' + d.riskLevel + '">' + (d.riskLevel === 'warn' ? '注意' : '正常') + '</span></div><div class="sv-card-meta">云量 ' + d.maxCloud.toFixed(0) + '% · 降水 ' + d.maxPrecip.toFixed(1) + 'mm · 风 ' + d.avgWind.toFixed(0) + 'm/s</div></div>';
-    }).join("");
+    el.innerHTML = days.map(d => `
+      <div class="sv-card">
+        <div class="sv-card-header">
+          <div class="sv-card-title">${d.date.slice(5)}</div>
+          <span class="sv-badge ${d.riskLevel}">${levelText(d.riskLevel)}</span>
+        </div>
+        <div class="sv-card-meta">云量 ${Math.round(d.maxCloud)}% · 降水 ${d.maxPrecip.toFixed(1)} mm · 风 ${d.avgWind.toFixed(0)} km/h</div>
+      </div>`).join("");
   } catch (err) {
     console.error("Forecast load failed:", err);
-    container.innerHTML = "<div style=\"font-size:12px;color:var(--sv-text-dim);padding:8px;text-align:center;\">加载失败</div>";
+    el.innerHTML = `<div class="sv-empty">预报加载失败（网络受限）</div>`;
   }
 }
 
-// ── 加载区域时序数据 ────────────────────────────────────────────────────
+// ── 航线 Tab：真剖面 + 真机场天气 ──────────────────────────────────
 
-async function loadRegion(region) {
-  currentRegion = region;
-  const r = REGIONS[region];
-  updateLocationDisplay();
-  setStatus("加载中…");
+async function checkRoute() {
+  const result = $("sv-route-result");
+  const from = $("sv-from").value.trim().toUpperCase();
+  const to = $("sv-to").value.trim().toUpperCase();
+  const a = AIRPORTS[from], b = AIRPORTS[to];
 
-  try {
-    const frames = await provider.getTimeSeries(region, "2026-07-28T12:00:00Z", 12, 5);
-
-    const tex = synth.synthesize(frames[0]);
-    const url = await textureToBlobUrl(tex);
-    await engine.swapWeatherTexture(url);
-    setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-
-    timeline = new TimelineController();
-    timeline.load(frames.map(function(f, i) { return { timestamp: f.timestamp, data: f }; }));
-    const slider = document.getElementById("sv-timeline");
-    if (slider) slider.max = timeline.count - 1;
-    updateTimeDisplay();
-
-    renderStormsFromTracker(frames[Math.floor(frames.length / 2)]);
-    loadSigmets();
-    loadForecast();
-
-    engine.setPilotView(r.center[0], r.center[1], r.alt);
-    setStatus("实时");
-    toast("切换至 " + r.name);
-  } catch (err) {
-    console.error("loadRegion failed:", err);
-    toast("加载失败（" + region + "）");
-    setStatus("错误", "error");
-  }
-}
-
-// ── 单体面板 ──────────────────────────────────────────────────────────
-
-function renderStormsFromTracker(frame) {
-  const storms = stormTracker.detect(frame);
-  const container = document.getElementById("sv-storms");
-  if (!container) return;
-  if (!storms.length) {
-    container.innerHTML = "<div style=\"font-size:12px;color:var(--sv-text-dim);padding:8px;text-align:center;\">本时次无强回波</div>";
+  if (!a || !b) {
+    result.innerHTML = `<div class="sv-empty">暂不支持该机场。可用：${Object.keys(AIRPORTS).join(" / ")}</div>`;
     return;
   }
-  container.innerHTML = storms.map(function(s) {
-    return '<div class="sv-card" data-lon="' + s.lon + '" data-lat="' + s.lat + '"><div class="sv-card-header"><div class="sv-card-title">' + s.id + '</div><span class="sv-badge ' + s.level + '">' + s.dbz.toFixed(0) + ' dBZ</span></div><div class="sv-card-meta">云顶 ' + (s.topHeight/1000).toFixed(1) + ' km · 移速 ' + (s.driftSpeed ? s.driftSpeed.toFixed(0) : '--') + ' km/h</div></div>';
-  }).join("");
+  result.innerHTML = `<div class="sv-empty">查询中…</div>`;
 
-  container.querySelectorAll(".sv-card").forEach(function(card) {
-    card.addEventListener("click", function() {
-      const lon = parseFloat(card.dataset.lon);
-      const lat = parseFloat(card.dataset.lat);
-      const r = REGIONS[currentRegion];
-      engine.setPilotView(lon, lat, 5000);
-      toast("飞行至 " + card.querySelector('.sv-card-title').textContent);
-    });
-  });
+  // 1) 雷达剖面（FlightPathProfiler，基于当前区域当前帧）
+  profiler.setPath([{ lon: a.lon, lat: a.lat }, { lon: b.lon, lat: b.lat }]);
+  const frame = weatherFrames[timeline.index] || weatherFrames[0];
+  const profile = frame ? profiler.getProfile(frame) : null;
+
+  // 2) 两端机场实时天气（Open-Meteo 真实 API）
+  const [wxA, wxB] = await Promise.allSettled([
+    provider.getAirportSnapshot(a.lat, a.lon),
+    provider.getAirportSnapshot(b.lat, b.lon),
+  ]);
+
+  // 3) 风险判定：剖面最大 dBZ
+  let maxDbz = 0;
+  if (profile) {
+    for (let i = 0; i < profile.dbz.length; i++) maxDbz = Math.max(maxDbz, profile.dbz[i]);
+  }
+  const risk = maxDbz > 45 ? "danger" : maxDbz > 30 ? "warn" : "safe";
+  const riskText = risk === "danger" ? "建议绕飞" : risk === "warn" ? "注意对流" : "航路畅通";
+
+  const airportCard = (icao, ap, wx) => {
+    if (wx.status !== "fulfilled") {
+      return `<div class="sv-card"><div class="sv-card-header"><div class="sv-card-title">${icao} ${ap.name}</div></div>
+        <div class="sv-card-meta">天气获取失败（网络受限）</div></div>`;
+    }
+    const v = wx.value;
+    return `<div class="sv-card">
+      <div class="sv-card-header"><div class="sv-card-title">${icao} ${ap.name}</div></div>
+      <div class="sv-card-meta">云底 ${Math.round(v.cloud.cappi_1km)} dBZ 等效 · 降水 ${v.precipitation.toFixed(1)} mm · 风 ${v.windSpeed.toFixed(0)} km/h @${Math.round(v.windDir)}°</div>
+    </div>`;
+  };
+
+  result.innerHTML = `
+    <div class="sv-card">
+      <div class="sv-card-header">
+        <div class="sv-card-title">${from} → ${to}</div>
+        <span class="sv-badge ${risk}">${riskText}</span>
+      </div>
+      <div class="sv-card-meta">距离 ${profile ? profile.distanceKm : "--"} km · 航路峰值 ${maxDbz.toFixed(0)} dBZ</div>
+    </div>
+    <div style="font-size:11px;color:var(--sv-text-muted);margin:8px 0 4px;">航路垂直剖面（1/3/6 km 扫层，基于${REGIONS[currentRegion].name}雷达帧）</div>
+    <canvas id="sv-profile-canvas" width="640" height="160" style="width:100%;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid var(--sv-border-subtle);"></canvas>
+    ${airportCard(from, a, wxA)}
+    ${airportCard(to, b, wxB)}
+  `;
+
+  if (profile) drawProfile($("sv-profile-canvas"), profile);
 }
 
-// ── 时间轴控制 ────────────────────────────────────────────────────────
+/** 剖面图：横轴距离，纵轴 3 个扫层，dBZ 上色 */
+function drawProfile(canvas, profile) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
 
-function updateTimeDisplay() {
-  if (!timeline) return;
-  const el = document.getElementById("sv-time");
-  if (!el) return;
-  const d = new Date(timeline.currentTime);
-  el.textContent = d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
-}
+  const n = profile.sampleCount;
+  const levels = 3;
+  const padL = 34, padB = 18, padT = 6;
+  const plotW = w - padL - 6, plotH = h - padT - padB;
+  const cellW = plotW / n, cellH = plotH / levels;
 
-function togglePlay() {
-  const btn = document.getElementById("sv-play");
-  if (!btn) return;
-  if (playTimer) {
-    clearInterval(playTimer);
-    playTimer = null;
-    btn.textContent = "▶";
-    return;
+  for (let si = 0; si < n; si++) {
+    for (let lv = 0; lv < levels; lv++) {
+      const dbz = profile.dbz[si * levels + lv];
+      if (dbz < 10) continue;
+      ctx.fillStyle = dbzColor(dbz);
+      // 层序自下而上：lv=0 (1km) 画在底部
+      const y = padT + (levels - 1 - lv) * cellH;
+      ctx.fillRect(padL + si * cellW, y, Math.ceil(cellW), cellH - 1);
+    }
   }
 
-  btn.textContent = "⏸";
-  playTimer = setInterval(function() {
-    if (!timeline) return;
-    const slider = document.getElementById("sv-timeline");
-    let next = (parseInt(slider.value) + 1) % timeline.count;
-    seekToFrame(next);
-  }, 800);
+  // 轴标注
+  ctx.fillStyle = "rgba(203,213,225,0.7)";
+  ctx.font = "10px JetBrains Mono, monospace";
+  const heightLabels = ["6km", "3km", "1km"];
+  for (let lv = 0; lv < levels; lv++) {
+    ctx.fillText(heightLabels[lv], 4, padT + lv * cellH + cellH / 2 + 3);
+  }
+  ctx.fillText("0", padL, h - 5);
+  const distText = `${profile.distanceKm} km`;
+  ctx.fillText(distText, w - ctx.measureText(distText).width - 4, h - 5);
 }
 
-async function seekToFrame(idx) {
-  if (!timeline) return;
-  timeline.seek(idx);
-  const slider = document.getElementById("sv-timeline");
-  if (slider) slider.value = idx;
-  updateTimeDisplay();
-
-  const frame = timeline.currentFrame;
-  if (!frame) return;
-
-  const tex = synth.synthesize(frame.data);
-  const url = await textureToBlobUrl(tex);
-  await engine.swapWeatherTexture(url);
-  setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-
-  renderStormsFromTracker(frame.data);
+function dbzColor(dbz) {
+  if (dbz >= 50) return "rgba(239,68,68,0.95)";
+  if (dbz >= 40) return "rgba(245,158,11,0.9)";
+  if (dbz >= 30) return "rgba(250,204,21,0.85)";
+  if (dbz >= 20) return "rgba(34,197,94,0.8)";
+  return "rgba(56,189,248,0.55)";
 }
 
-// ── Tab 导航 ──────────────────────────────────────────────────────────
+// ── Tab 切换 ──────────────────────────────────────────────────────
 
-const PANELS = {
-  storms: document.getElementById("sv-storms-panel"),
-  timeline: document.getElementById("sv-timeline-panel"),
-  sigmets: document.getElementById("sv-sigmets-panel"),
-  forecast: document.getElementById("sv-forecast-panel"),
-  route: document.getElementById("sv-route-panel"),
-  settings: document.getElementById("sv-settings-panel"),
-};
+const TABS = ["storms", "timeline", "sigmets", "forecast", "route", "settings"];
 
 function showPanel(tab) {
-  Object.values(PANELS).forEach(function(panel) {
-    if (panel) {
-      panel.classList.add("hidden");
+  for (const t of TABS) {
+    const panel = $(`sv-${t}-panel`);
+    if (!panel) continue;
+    if (t === tab) {
+      panel.classList.remove("hidden");
+      requestAnimationFrame(() => panel.classList.add("visible"));
+    } else {
       panel.classList.remove("visible");
+      panel.classList.add("hidden");
     }
-  });
-
-  const panel = PANELS[tab];
-  if (panel) {
-    panel.classList.remove("hidden");
-    void panel.offsetWidth;
-    panel.classList.add("visible");
-    currentTab = tab;
   }
-
-  document.querySelectorAll("#sv-tab-bar .sv-tab").forEach(function(btn) {
+  document.querySelectorAll("#sv-tab-bar .sv-tab").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tab === tab);
   });
 }
 
-// ── 航线天气检查 ──────────────────────────────────────────────────────
+// ── 事件绑定（单一入口，绑定一次） ─────────────────────────────────
 
-const AIRPORT_NAMES = {
-  "ZBAA": "北京首都", "ZBAD": "北京大兴", "ZBBB": "北京南苑",
-  "ZGGG": "广州白云", "ZGOW": "揭阳潮汕", "ZGSZ": "深圳宝安",
-  "ZSPD": "上海浦东", "ZSSS": "上海虹桥", "ZSNJ": "南京禄口",
-  "ZUCK": "重庆江北", "ZUUU": "成都天府", "ZPPP": "昆明长水",
-  "ZYTX": "桃园", "RCSS": "台北松山", "RCTP": "台湾桃园",
-};
-
-function getAirportName(icao) {
-  return AIRPORT_NAMES[icao.toUpperCase()] || icao.toUpperCase();
-}
-
-function generateRouteWeather(from, to) {
-  const fromUpper = from.toUpperCase();
-  const toUpper = to.toUpperCase();
-  const fromName = getAirportName(fromUpper);
-  const toName = getAirportName(toUpper);
-  
-  const airports = {
-    "ZBAA": [116.5, 39.8], "ZGGG": [113.3, 23.1],
-    "ZSPD": [121.8, 31.1], "ZSSS": [121.3, 31.2],
-    "ZUCK": [106.6, 29.7], "ZUUU": [104.4, 30.3],
-    "ZPPP": [102.9, 25.0], "ZGOW": [116.5, 23.5],
-  };
-  
-  const fromCoord = airports[fromUpper] || [116.5, 39.8];
-  const toCoord = airports[toUpper] || [113.3, 23.1];
-  
-  const R = 6371;
-  const dLat = (toCoord[1] - fromCoord[1]) * Math.PI / 180;
-  const dLon = (toCoord[0] - fromCoord[0]) * Math.PI / 180;
-  const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(fromCoord[1]*Math.PI/180) * Math.cos(toCoord[1]*Math.PI/180) * Math.sin(dLon/2)*Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  const distance = Math.round(R * c);
-  
-  const fromWeather = {
-    temp: (20 + Math.random() * 10).toFixed(0),
-    wind: (5 + Math.random() * 15).toFixed(0),
-    windDir: ["北", "东北", "东", "东南", "南", "西南", "西", "西北"][Math.floor(Math.random() * 8)],
-    vis: (5 + Math.random() * 10).toFixed(0),
-    cloud: Math.floor(Math.random() * 8 + 2) * 10,
-    metar: fromUpper + " " + ["VFR","MVFR","IFR"][Math.floor(Math.random()*3)],
-  };
-  
-  const toWeather = {
-    temp: (22 + Math.random() * 12).toFixed(0),
-    wind: (3 + Math.random() * 12).toFixed(0),
-    windDir: ["北", "东北", "东", "东南", "南", "西南", "西", "西北"][Math.floor(Math.random() * 8)],
-    vis: (3 + Math.random() * 10).toFixed(0),
-    cloud: Math.floor(Math.random() * 8 + 1) * 10,
-    metar: toUpper + " " + ["VFR","MVFR","IFR"][Math.floor(Math.random()*3)],
-  };
-  
-  const flightLevel = ["FL280", "FL300", "FL320", "FL350"][Math.floor(Math.random() * 4)];
-  const eta = Math.round(distance / 800);
-  const routeRisk = fromWeather.cloud > 60 || toWeather.cloud > 60 ? "warn" : "safe";
-  
-  return {
-    from: fromUpper, to: toUpper,
-    fromName, toName,
-    distance, eta,
-    fromWeather, toWeather, flightLevel, routeRisk
-  };
-}
-
-function renderRouteWeather(result) {
-  const el = document.getElementById("sv-route-result");
-  if (!el) return;
-  
-  const riskBadge = result.routeRisk === 'warn' 
-    ? '<span class="sv-badge warn">注意</span>'
-    : '<span class="sv-badge safe">良好</span>';
-  
-  el.innerHTML = '<div class="sv-card" style="border-color: var(--sv-border);"><div class="sv-card-header"><div class="sv-card-title">' + result.fromName + ' → ' + result.toName + '</div>' + riskBadge + '</div><div class="sv-card-meta" style="margin-bottom:12px;">距离 ' + result.distance + ' km · 预计 ' + result.eta + 'h · 巡航高度 ' + result.flightLevel + '</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;"><div style="padding:10px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid var(--sv-border-subtle);"><div style="font-size:11px;color:var(--sv-accent);font-weight:600;margin-bottom:6px;">✈️ ' + result.from + '</div><div style="font-size:11px;color:var(--sv-text-muted);margin-bottom:2px;">' + result.fromName + '</div><div style="font-size:12px;font-family:var(--sv-font-mono);">' + result.fromWeather.temp + '°C · ' + result.fromWeather.wind + 'km/h ' + result.fromWeather.windDir + '风</div><div style="font-size:11px;color:var(--sv-text-dim);margin-top:2px;">能见度 ' + result.fromWeather.vis + 'km · 云量 ' + result.fromWeather.cloud + '%</div><div style="font-size:11px;color:var(--sv-text-dim);margin-top:2px;">METAR: ' + result.fromWeather.metar + '</div></div><div style="padding:10px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid var(--sv-border-subtle);"><div style="font-size:11px;color:var(--sv-accent);font-weight:600;margin-bottom:6px;">🛬 ' + result.to + '</div><div style="font-size:11px;color:var(--sv-text-muted);margin-bottom:2px;">' + result.toName + '</div><div style="font-size:12px;font-family:var(--sv-font-mono);">' + result.toWeather.temp + '°C · ' + result.toWeather.wind + 'km/h ' + result.toWeather.windDir + '风</div><div style="font-size:11px;color:var(--sv-text-dim);margin-top:2px;">能见度 ' + result.toWeather.vis + 'km · 云量 ' + result.toWeather.cloud + '%</div><div style="font-size:11px;color:var(--sv-text-dim);margin-top:2px;">METAR: ' + result.toWeather.metar + '</div></div></div><div style="padding:8px 10px;border-radius:8px;background:var(--sv-warn-bg);border:1px solid rgba(245,158,11,0.2);font-size:11px;color:var(--sv-text-secondary);line-height:1.5;">💡 <strong>航线提示：</strong>' + (result.routeRisk === 'warn' ? '航线经过云量较高区域，建议关注航路天气。' : '当前航线天气条件良好，VFR 飞行可行。') + ' 起降机场 ' + (result.fromWeather.vis > 5 && result.toWeather.vis > 5 ? '能见度充足' : '能见度偏低') + '。</div></div>';
-}
-
-async function checkRouteWeather() {
-  const fromEl = document.getElementById("sv-from");
-  const toEl = document.getElementById("sv-to");
-  const resultEl = document.getElementById("sv-route-result");
-  if (!fromEl || !toEl) return;
-  
-  const from = fromEl.value.trim();
-  const to = toEl.value.trim();
-  
-  if (!from || !to) {
-    toast("请输入起降机场代码");
-    return;
-  }
-  
-  resultEl.innerHTML = '<div style="font-size:12px;color:var(--sv-text-muted);padding:8px;text-align:center;">查询中…</div>';
-  
-  await new Promise(function(r) { setTimeout(r, 600 + Math.random() * 400); });
-  
-  const result = generateRouteWeather(from, to);
-  renderRouteWeather(result);
-  toast("航线天气：" + result.fromName + " → " + result.toName);
-}
-
-// ── 事件绑定 ──────────────────────────────────────────────────────────
-
-document.querySelectorAll("#sv-regions .sv-chip").forEach(function(btn) {
-  btn.addEventListener("click", async function() {
-    document.querySelectorAll("#sv-regions .sv-chip").forEach(function(b) { b.classList.remove("active"); });
-    btn.classList.add("active");
-    await loadRegion(btn.dataset.region);
+function bindEvents() {
+  // 区域切换
+  document.querySelectorAll("#sv-regions .sv-chip").forEach(chip => {
+    chip.addEventListener("click", async () => {
+      const region = chip.dataset.region;
+      if (region === currentRegion) return;
+      currentRegion = region;
+      document.querySelectorAll("#sv-regions .sv-chip").forEach(c =>
+        c.classList.toggle("active", c === chip));
+      flyToRegion(region);
+      toast(`切换到${REGIONS[region].name}`);
+      await loadRegion(region);
+      loadSigmets();
+      loadForecast();
+    });
   });
-});
 
-document.querySelectorAll("[data-fpv]").forEach(function(btn) {
-  btn.addEventListener("click", function() {
-    const r = REGIONS[currentRegion];
-    const views = {
-      pilot:   function() { engine.setPilotView(r.center[0], r.center[1], 10000, 0, -Math.PI/3); },
-      tower:   function() { engine.setPilotView(r.center[0] - 0.5, r.center[1] - 0.5, 1500, Math.PI/4, -0.1); },
-      side:    function() { engine.setPilotView(r.center[0] + 3, r.center[1], 12000, -Math.PI/2, 0); },
-      top:     function() { engine.setPilotView(r.center[0], r.center[1], 50000, 0, -Math.PI/2); },
-    };
-    if (views[btn.dataset.fpv]) views[btn.dataset.fpv]();
-    toast(btn.textContent + "视角");
+  // Tab 切换
+  document.querySelectorAll("#sv-tab-bar .sv-tab").forEach(btn => {
+    btn.addEventListener("click", () => showPanel(btn.dataset.tab));
   });
-});
 
-const toggleCloudsBtn = document.getElementById("sv-toggle-clouds");
-if (toggleCloudsBtn) {
-  toggleCloudsBtn.addEventListener("click", function() {
+  // 时间轴
+  $("sv-timeline")?.addEventListener("input", (e) => {
+    timeline.pause();
+    updatePlayIcon();
+    timeline.seek(Number(e.target.value));
+  });
+  $("sv-play")?.addEventListener("click", () => {
+    const st = timeline.getState();
+    if (st.playing) timeline.pause(); else timeline.play();
+    updatePlayIcon();
+  });
+
+  // 飞行视角
+  document.querySelectorAll("[data-fpv]").forEach(btn => {
+    btn.addEventListener("click", () => setFlightView(btn.dataset.fpv));
+  });
+
+  // 云体显隐
+  $("sv-toggle-clouds")?.addEventListener("click", () => {
+    if (!engineReady) { toast("3D 引擎未就绪"); return; }
     cloudsVisible = !cloudsVisible;
     engine.setCloudsVisible(cloudsVisible);
-    toast(cloudsVisible ? "云体显示" : "云体隐藏");
+    toast(cloudsVisible ? "云体已显示" : "云体已隐藏");
+  });
+
+  // 刷新数据
+  $("sv-refresh")?.addEventListener("click", async () => {
+    toast("刷新数据…");
+    await loadRegion(currentRegion);
+    loadSigmets();
+    loadForecast();
+  });
+
+  // 性能档位（HTML 中为 .sv-chip）
+  document.querySelectorAll("#sv-perf .sv-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      currentPerformance = chip.dataset.perf;
+      document.querySelectorAll("#sv-perf .sv-chip").forEach(c =>
+        c.classList.toggle("active", c === chip));
+      if (engineReady) engine.setPerformancePreset(currentPerformance);
+      toast(`性能模式：${chip.textContent}`);
+    });
+  });
+
+  // 航线查询
+  $("sv-check-route")?.addEventListener("click", () => {
+    checkRoute().catch(err => {
+      console.error("Route check failed:", err);
+      $("sv-route-result").innerHTML = `<div class="sv-empty">查询失败：${err.message}</div>`;
+    });
   });
 }
 
-document.querySelectorAll("#sv-perf .sv-btn").forEach(function(btn) {
-  btn.addEventListener("click", function() {
-    document.querySelectorAll("#sv-perf .sv-btn").forEach(function(b) { b.classList.remove("active"); });
-    btn.classList.add("active");
-    currentPerformance = btn.dataset.perf;
-    engine.setPerformancePreset(currentPerformance);
-    toast("性能：" + btn.textContent);
-  });
-});
-
-const slider = document.getElementById("sv-timeline");
-if (slider) {
-  slider.addEventListener("input", function() { seekToFrame(parseInt(slider.value)); });
-}
-const playBtn = document.getElementById("sv-play");
-if (playBtn) {
-  playBtn.addEventListener("click", togglePlay);
+function updatePlayIcon() {
+  const btn = $("sv-play");
+  if (btn) btn.textContent = timeline.getState().playing ? "⏸" : "▶";
 }
 
-document.querySelectorAll("#sv-tab-bar .sv-tab").forEach(function(btn) {
-  btn.addEventListener("click", function() { showPanel(btn.dataset.tab); });
-});
+// ── 启动（单一入口） ───────────────────────────────────────────────
 
-const checkRouteBtn = document.getElementById("sv-check-route");
-if (checkRouteBtn) {
-  checkRouteBtn.addEventListener("click", checkRouteWeather);
-}
+async function main() {
+  // 解除 HTML 内置 4s 超时兜底（它只检查 .hidden 类）；用 inline style 控制真实可见性
+  const loading = $("loading");
+  loading.classList.add("hidden");
+  loading.style.display = "flex";
+  window.__mainLoaded = true;
 
-// ── 启动 ─────────────────────────────────────────────────────────────────
+  bindEvents();
+  timeline.onFrame(onTimelineFrame);
+  currentPerformance = detectDevicePerformance();
+  document.querySelectorAll("#sv-perf .sv-chip").forEach(c =>
+    c.classList.toggle("active", c.dataset.perf === currentPerformance));
 
-setTimeout(function() {
+  // 1) Cesium Viewer
   try {
-    showUI();
-    initEngineInBackground();
+    initViewer();
+    window.__viewer = viewer;
   } catch (err) {
-    console.error("Fatal init error:", err);
-    hideLoading();
-    var header = document.getElementById("sv-header");
-    if (header) header.style.display = "flex";
-    var tabBar = document.getElementById("sv-tab-bar");
-    if (tabBar) tabBar.style.display = "flex";
-    toast("初始化失败：" + err.message);
+    console.error("Viewer init failed:", err);
+    setStatus("2D 模式", "error");
   }
-}, 100);
 
-} catch (err) {
-  console.error("Fatal init error:", err);
-  hideLoading();
-  var header = document.getElementById("sv-header");
-  if (header) header.style.display = "flex";
-  var tabBar = document.getElementById("sv-tab-bar");
-  if (tabBar) tabBar.style.display = "flex";
-  toast("初始化失败：" + err.message);
+  // 2) 体积云引擎（失败时降级为数据面板模式）
+  if (viewer) {
+    try {
+      await initEngine();
+      const fallback = $("sv-fallback");
+      if (fallback) fallback.style.display = "none";
+      setStatus("实时");
+      toast("SkyVortex 就绪");
+    } catch (err) {
+      console.error("Engine init failed:", err);
+      window.__init_error = err.message + "\n" + (err.stack || "");
+      setStatus("2D 模式", "error");
+      toast("3D 引擎不可用，数据面板仍可使用");
+    }
+  }
+  loading.style.display = "none";
+
+  // 3) 数据管线（即使引擎失败也照常提供分析数据）
+  try {
+    await loadRegion(currentRegion);
+  } catch (err) {
+    console.error("loadRegion failed:", err);
+    setStatus("数据错误", "error");
+  }
+  loadSigmets();
+  loadForecast();
 }
+
+main();
